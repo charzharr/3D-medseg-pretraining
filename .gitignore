@@ -1,0 +1,27 @@
+
+# Python
+env/
+__pycache__/
+.ipynb_checkpoints/
+.pytest_cache/
+*.pyc
+*.pyd
+*.pyi
+
+# PyTorch
+*.pth
+
+# Visual Studio Code files
+.vscode
+.vs
+
+# OSX or Linux Crumbs
+.DS_Store
+.swp
+
+# Misc - Project Specific
+archive/
+analysis/
+/datasets/
+wandb/
+wandb_login.sh
