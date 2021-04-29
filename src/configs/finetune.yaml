@@ -4,7 +4,7 @@ experiment:
   description: |
     > Experiment for 3D segmentation pretraining.
   id: "(MonthDate)exp_dataset-split_ce-settings_run"     # for wandb run identification
-  name: 'pretrain'  # for experiment module identification
+  name: 'finetune'  # for experiment module identification
   project: '3DSeg-Pretrain'
   debug:                                            # (Correct Alignment)
     mode: False                                     # < Check
