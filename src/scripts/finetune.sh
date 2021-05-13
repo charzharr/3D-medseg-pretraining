@@ -1,6 +1,6 @@
 #!/bin/bash
 
-#$ -N 3DPre
+#$ -N 3DPre_finetune
 #$ -o "/afs/crc.nd.edu/user/y/yzhang46/_3DPRE/src/experiments/finetune/artifacts/out.log"
 
 #$ -M yzhang46@nd.edu
@@ -10,7 +10,7 @@
 #$ -q long          
 
 #$ -q gpu@@csecri-p100   # gpu@@csecri-p100, gpu@@csecri-titanxp 
-#$ -l gpu_card=4       
+#$ -l gpu_card=2     
 
 
 export PROJ_PATH="/afs/crc.nd.edu/user/y/yzhang46/_3DPRE"

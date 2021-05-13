@@ -16,14 +16,14 @@ import click
 import torch
 
 import configs, experiments
-from experiments.fullsup import emain as fullsup_main
-from experiments.meanteacher import emain as mt_main
+from experiments.finetune import finetune as finetune_main
+from experiments.pretrain import byol as byol_main
 
 
 USER_CHOICES = ("charzhar", "yzhang46")
 EXPERIMENTS = {
-    'fullsup': fullsup_main,
-    'mt': mt_main
+    'finetune': finetune_main,
+    'byol': byol_main
 }
 
 
@@ -45,10 +45,7 @@ def run_cli(user, gpu, config, checkpoint=None):
     # experiment setup
     _set_seed(cfg['experiment']['seed'])
 
-    if user == 'yzhang46':
-        device = f'cuda' if torch.cuda.is_available() else 'cpu'
-    else:
-        device = f'cuda' if torch.cuda.is_available() else 'cpu'
+    device = f'cuda' if torch.cuda.is_available() else 'cpu'
     cfg['experiment']['device'] = device
     cfg['experiment']['gpu_idxs'] = gpu_indices
     print(f" > Using device(s): {gpu_indices}.")

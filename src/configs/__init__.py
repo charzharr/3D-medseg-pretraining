@@ -26,6 +26,7 @@ class NameSpace(dict):
                               for k in dicts})
 
 
+
 def get_config(filename):
     r""" Merges specified config (or none) with default cfg file. """
     
