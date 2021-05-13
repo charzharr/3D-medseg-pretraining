@@ -2,6 +2,7 @@
 # Experiment Setup, Logging Specifications, Environment
 experiment:
   description: |
+
     > Experiment for 3D segmentation fine-tuning. 
   id: "(may2)fullsup_colon_dce_r1"     # for wandb run identification
   name: 'finetune'   # for experiment module identification
