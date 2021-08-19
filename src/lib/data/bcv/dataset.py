@@ -25,10 +25,19 @@ Resources
 import os
 import logging
 import time
+import random
+import math
+import multiprocessing
 import pandas as pd
 from pathlib import Path
 from collections import OrderedDict
 import nibabel as nib
+
+import dmt
+from dmt.dmt.data.images import ScalarImage3D
+from dmt.dmt.data.label_masks import ScalarMask3D
+from dmt.dmt.data.samples.sample import Sample
+from dmt.dmt.data.samples.sampleset import SampleSet
 
 
 __all__ = ['get_df']
@@ -41,6 +50,63 @@ CLASSES = ['spleen', 'right_kidney', 'left_kidney', 'gallbladder', 'esophagus',
            'liver', 'stomach', 'aorta', 'inferior_vena_cava', 
            'portal_vein_and_splenic_vein', 'pancreas', 'right_adrenal_gland',
            'left_adrenal_gland']
+
+
+### ======================================================================== ###
+### * ### * ### * ### *           Custom Loading         * ### * ### * ### * ###
+### ======================================================================== ###
+
+
+class SampleSet(dmt.dmt.data.samples.sampleset.SampleSet):
+    
+    def __getitem__(self, idx):
+        sample = self.samples[idx]
+        image = sample.image.array
+        mask = sample.mask.array
+        return image, mask, sample
+
+    
+def get_sample(args, load_to_ram=True):
+    i, R = args
+    classnames = ['background'] + CLASSES
+    image = ScalarImage3D(R['image'], permanent_load=load_to_ram)
+    mask = ScalarMask3D(R['mask'], classnames)
+    new_sample = Sample({
+        'image': image,
+        'mask': mask,
+        'id': i,
+        'shape': R['imgsize']
+    })
+    return i, new_sample
+
+def get_datasets(df, load_to_ram=True):
+    start = time.time()
+    classnames = ['background'] + CLASSES
+    
+    results = []
+    with multiprocessing.Pool() as pool:
+        args = []
+        for i, R in df.iterrows():
+            args.append((i, R))
+        results = pool.map(get_sample, args)
+    # import IPython; IPython.embed(); 
+    # results = [r.get() for r in results]
+    
+    train_ind, val_ind, test_ind = split_indices(range(len(df)))
+    train_samples, val_samples, test_samples = [], [], []
+    for i, new_sample in results:
+        if i in train_ind:
+            train_samples.append(new_sample)
+        elif i in val_ind:
+            val_samples.append(new_sample)
+        else:
+            test_samples.append(new_sample)
+    print(f'DONE! {time.time() - start:.2f} sec')
+    return {
+        'train': SampleSet(train_samples),
+        'val': SampleSet(val_samples),
+        'test': SampleSet(test_samples)
+    }
 
 
 ### ======================================================================== ###
@@ -106,12 +172,13 @@ def get_df(df_file=None, dataset_path=DATASET_DIR):
 ### ======================================================================== ###
 
 
-def split(indices, train=0.6, val=0.2, test=0.2):
+def split_indices(indices, train=0.6, val=0.2, test=0.2):
+    N_indices = len(indices)
     indices = set(indices)
-    train = random.sample(indices, k=math.ceil(0.6 * len(indices)))
+    train = set(random.sample(indices, k=math.ceil(0.6 * N_indices)))
     indices = indices - train
-    test = random.sample(indices, k=math.ceil(0.2 * len(indices)))
-    val = indices = test
+    test = set(random.sample(indices, k=math.ceil(0.2 * N_indices)))
+    val = indices - test
     return train, val, test
 
 def natural_sort(l): 
@@ -122,7 +189,8 @@ def natural_sort(l):
     
 
 if __name__ == '__main__':
-    logging.basicConfig(level=logging.DEBUG)
+    # logging.basicConfig(level=logging.DEBUG)
     logging.info('Print everything!!!')
     df = get_df()
+    datasets_d = get_datasets(df)
     import IPython; IPython.embed(); 
