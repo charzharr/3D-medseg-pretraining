@@ -25,3 +25,6 @@ analysis/
 /datasets/
 wandb/
 wandb_login.sh
+
+tests/
+samples/

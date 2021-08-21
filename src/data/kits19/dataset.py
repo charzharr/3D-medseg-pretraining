@@ -25,7 +25,11 @@ __all__ = ['get_df', 'collect_df']
 
 
 CLASSES = ['background', 'kidney', 'tumor']   # values 0, 1, 2
-DATASET_DIR = '/afs/crc.nd.edu/user/y/yzhang46/datasets/KiTS-2019/'
+from sys import platform
+if platform == "darwin":
+    DATASET_DIR = '/Users/charzhar/Desktop/_Datasets/KiTS-2019'
+else:
+    DATASET_DIR = '/afs/crc.nd.edu/user/y/yzhang46/datasets/KiTS-2019/'
 assert os.path.isdir(DATASET_DIR)
 
 
@@ -36,7 +40,7 @@ def get_df(df_file=None, dataset_path=DATASET_DIR):
     ds_path = Path(dataset_path)
     default_df = ds_path / 'default_df.csv'
     if default_df.exists():
-        logging.info(f"Loading default KiTS df ({default_df.absolute()}).")
+        print(f"Loading default KiTS df ({default_df.absolute()}).")
         return pd.read_csv(str(default_df))
     
     df = collect_df(dataset_path)

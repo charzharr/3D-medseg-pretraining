@@ -1,7 +1,7 @@
 # Core
 torch
 torchvision
-torchsummary
+torch-summary
 numpy 
 scipy
 matplotlib
