@@ -11,6 +11,7 @@ Resources
 """
 
 import os
+import pathlib
 import csv
 import pandas as pd
 import numpy as np
@@ -20,30 +21,50 @@ from PIL import Image
 from collections import OrderedDict
 import torch, torchvision
 
+if __name__ == '__main__':  # add src to sys path & main namespace
+    import sys
+    curr_path = pathlib.Path().absolute()
+    sys.path.append(str(curr_path.parent.parent))
+    from data.utils import natural_sort, correct_df_directories
+else:
+    from ..utils import natural_sort, correct_df_directories
 
 __all__ = ['get_df', 'collect_df']
 
 
-CLASSES = ['background', 'kidney', 'tumor']   # values 0, 1, 2
-from sys import platform
-if platform == "darwin":
+# Constants
+if sys.platform == "darwin":
     DATASET_DIR = '/Users/charzhar/Desktop/_Datasets/KiTS-2019'
 else:
     DATASET_DIR = '/afs/crc.nd.edu/user/y/yzhang46/datasets/KiTS-2019/'
 assert os.path.isdir(DATASET_DIR)
+CLASSES = ['background', 'kidney', 'tumor']   # values 0, 1, 2
 
+
+# Fundamental Collection Functions
 
 def get_df(df_file=None, dataset_path=DATASET_DIR):
+    """ Returns the dataframe describing the default dataset structure.
+    In order of precedence, the following is returned:
+        1. if df_file is given & exists, then that csv file is turned into a df
+        2. if df_file is None, then we look for a default_df.csv file in the
+            main dataset directory & load it
+        3. if both of above comes up empty, then collect_df() is called to
+            painstakingly collect all images & their info into a new df.
+    """
     if df_file:
-        return pd.read_csv(df_file)
+        df = pd.read_csv(df_file)
+        df = correct_df_directories(df, dataset_path)
+        return df
     
-    ds_path = Path(dataset_path)
+    ds_path = pathlib.Path(dataset_path)
     default_df = ds_path / 'default_df.csv'
     if default_df.exists():
         print(f"Loading default KiTS df ({default_df.absolute()}).")
-        return pd.read_csv(str(default_df))
-    
-    df = collect_df(dataset_path)
+        df = pd.read_csv(str(default_df))
+    else:
+        df = collect_df(dataset_path)
+    df = correct_df_directories(df, dataset_path)
     return df
 
 
@@ -90,14 +111,11 @@ def collect_df(path, save=None):
 ### ======================================================================== ###
 
 
-def natural_sort(l): 
-    import re
-    convert = lambda text: int(text) if text.isdigit() else text.lower() 
-    alphanum_key = lambda key: [ convert(c) for c in re.split('([0-9]+)', key) ] 
-    return sorted(l, key = alphanum_key)
-
-
 if __name__ == '__main__':
-    df = collect_df(DATASET_DIR)
+    import time; _start = time.time()
+    # df = get_df(DATASET_DIR)
+    df = get_df()
     print(df.head(), '\n', df.tail())
+    print(f'[Took {time.time() - _start:.2f} secs.]')
+    import IPython; IPython.embed();
 

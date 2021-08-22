@@ -2,20 +2,25 @@
 <project version="4">
   <component name="ChangeListManager">
     <list default="true" id="3ef58f58-5b68-4b28-b55b-5df8a6c592c8" name="Changes" comment="">
-      <change afterPath="$PROJECT_DIR$/src/experiments/pgl/configs/pgl_base.yaml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/experiments/pgl/data_setup.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/experiments/pgl/run_experiment.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.gitignore" beforeDir="false" afterPath="$PROJECT_DIR$/.gitignore" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/requirements.txt" beforeDir="false" afterPath="$PROJECT_DIR$/requirements.txt" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/lib/data/bcv/BCV.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/data/bcv/BCV.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/lib/data/bcv/dataset.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/lib/data/decathlon/dataset.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/lib/data/kits19/dataset.py" beforeDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/data/utils.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/[Project] 3D Segmentation Pretraining.iml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/[Project] 3D Segmentation Pretraining.iml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/data/bcv/dataset.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/data/bcv/dataset.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/data/decathlon/dataset.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/data/decathlon/dataset.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/data/kits19/dataset.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/data/kits19/dataset.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/experiments/pgl/data_setup.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/experiments/pgl/data_setup.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
     <option name="LAST_RESOLUTION" value="IGNORE" />
+  </component>
+  <component name="FileTemplateManagerImpl">
+    <option name="RECENT_TEMPLATES">
+      <list>
+        <option value="Python Script" />
+      </list>
+    </option>
   </component>
   <component name="Git.Settings">
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
@@ -55,7 +60,8 @@
       <option name="number" value="Default" />
       <option name="presentableId" value="Default" />
       <updated>1629392036531</updated>
-      <workItem from="1629392038984" duration="7759000" />
+      <workItem from="1629392038984" duration="9848000" />
+      <workItem from="1629580748399" duration="9130000" />
     </task>
     <servers />
   </component>
@@ -72,6 +78,7 @@
         </entry>
       </map>
     </option>
+    <option name="oldMeFiltersMigrated" value="true" />
   </component>
   <component name="VcsManagerConfiguration">
     <ignored-roots>

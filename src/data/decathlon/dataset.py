@@ -13,22 +13,33 @@ Resources
 """
 
 import os
+import pathlib
 import logging
 import time
 import pandas as pd
-from pathlib import Path
 from collections import OrderedDict
 import nibabel as nib
 
+if __name__ == '__main__':  # add src to sys path & main namespace
+    import sys
+    curr_path = pathlib.Path().absolute()
+    sys.path.append(str(curr_path.parent.parent))
+    from data.utils import natural_sort, correct_df_directories
+else:
+    from ..utils import natural_sort, correct_df_directories
 
-__all__ = ['get_dfs', 'collect_task_df']
+__all__ = ['get_dfs', 'get_task_df', 'collect_task_df']
 
 
 # Dataset Constants
+if sys.platform == "darwin":
+    DATASET_DIR = '/Users/charzhar/Desktop/_Datasets/MedicalSegmentationDecathlon/'
+else:
+    DATASET_DIR = '/afs/crc.nd.edu/user/y/yzhang46/datasets/MedicalSegmentationDecathlon/'
+assert os.path.isdir(DATASET_DIR)
+
 TASKS = [None, None, 'Liver', None, None, 
          'Lung', 'Pancreas', 'HepaticVessel', 'Spleen', 'Colon']
-DATASET_DIR = '/afs/crc.nd.edu/user/y/yzhang46/datasets/MedicalSegmentationDecathlon/'
-assert os.path.isdir(DATASET_DIR)
 CLASSES_D = {
     'Liver': ['background', 'liver', 'cancer'],
     'Lung': ['background', 'cancer'],
@@ -39,41 +50,63 @@ CLASSES_D = {
 }
 
 
-
-
-### ======================================================================== ###
-### * ### * ### * ### *         Dataset Collection       * ### * ### * ### * ###
-### ======================================================================== ###
+# ======================================================================== #
+# * ### * ### * ### *         Dataset Collection       * ### * ### * ### * #
+# ======================================================================== #
 
 
 def get_dfs(dataset_path=DATASET_DIR):
     """Collect default dfs (train/test samples) from each Decathlon task."""
-    ds_path = Path(dataset_path)
+    ds_path = pathlib.Path(dataset_path)
     dataframes_d = {}
     for i, task in enumerate(TASKS):
         logging.info(f'Getting task {i+1}: {task}')
         if not task:
-            dataframes_d[task] = None
             continue
         
         task_path = ds_path / f'Task{i+1:02d}_{task}'
-        assert task_path.exists(), f"{task} path doesn't exist {task_path.absolute()}"
+        msg = f"{task} path doesn't exist {task_path.absolute()}"
+        assert task_path.exists(), msg
         
-        task_df = collect_task_df(task, task_path)
+        # task_df = collect_task_df(task, task_path)
+        task_df = get_task_df(task, task_path)
         dataframes_d[task] = task_df
     return dataframes_d
-            
+
+
+def get_task_df(task_name, task_path, df_file=None):
+    """ Returns the dataframe describing the default dataset structure
+    of a task from the Medical Segmentation Decathlon dataset.
+    In order of precedence, the following is returned:
+        1. if df_file is given, then that csv file is turned into a df
+        2. if df_file is None, then we look for a default_df.csv file & load it
+        3. if both of above comes up empty, then we call collect_task_df() to
+            painstakingly collect all images & their info into a new df.
+    """
+    if df_file:
+        df = pd.read_csv(df_file)
+        df = correct_df_directories(df, task_path)
+        return df
+
+    assert task_name in TASKS, f"Invalid task {task_name}."
+    task_path = pathlib.Path(task_path)
+    default_df = task_path / 'default_df.csv'
+    if default_df.exists():
+        msg = f"Loading default MSD-{task_name} df ({default_df.absolute()})."
+        logging.info(msg)
+        df = pd.read_csv(str(default_df))
+        df = correct_df_directories(df, task_path)
+        return df
+
+    df = collect_task_df(task_name, task_path)
+    return df
+
 
 def collect_task_df(task_name, task_path):
     """Collect default df (train/test samples) for specified task."""
     assert task_name in TASKS, f"Invalid task {task_name}."
     
-    dfp = task_path / f"default_df.csv"
-    if dfp.exists():
-        logging.info(f"Loading default df ({dfp.absolute()}) for task {task_name}.")
-        return pd.read_csv(dfp.absolute())
-    
-    logging.info(f"Collecting df ({dfp.absolute()}) for task {task_name}.")
+    logging.info(f"Collecting df ({task_path}) for task {task_name}.")
     start_time = time.time()
     
     train_path = task_path / 'imagesTr'
@@ -93,10 +126,10 @@ def collect_task_df(task_name, task_path):
         ('subset', []),
     ])
     for i, img in enumerate(train_images + test_images):
-        img_path = Path(img)
+        img_path = pathlib.Path(img)
         mask = '' if i >= len(label_images) else label_images[i]
         if mask:
-            assert img_path.name == Path(mask).name
+            assert img_path.name == pathlib.Path(mask).name
         vol = nib.load(img)
         
         df_d['id'].append(img_path.name.split('.')[0])
@@ -113,20 +146,11 @@ def collect_task_df(task_name, task_path):
     return df
 
 
-
-### ======================================================================== ###
-### * ### * ### * ### *         Additional Helpers       * ### * ### * ### * ###
-### ======================================================================== ###
-
-
-def natural_sort(l): 
-    import re
-    convert = lambda text: int(text) if text.isdigit() else text.lower() 
-    alphanum_key = lambda key: [ convert(c) for c in re.split('([0-9]+)', key) ] 
-    return sorted(l, key = alphanum_key)
-    
-
 if __name__ == '__main__':
-    logging.basicConfig(level=logging.DEBUG)
+    import time; _start = time.time()
+    lformat = '%(levelname)s | %(message)s'
+    logging.basicConfig(level=logging.DEBUG, format=lformat)
     logging.info('Print everything!!!')
     dfs_d = get_dfs()
+    print(f'[Took {time.time() - _start:.2f} secs.]')
+    import IPython; IPython.embed();
