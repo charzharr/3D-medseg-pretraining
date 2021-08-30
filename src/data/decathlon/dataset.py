@@ -12,7 +12,7 @@ Resources
  - http://medicaldecathlon.com/
 """
 
-import os
+import os, sys
 import pathlib
 import logging
 import time
@@ -21,7 +21,6 @@ from collections import OrderedDict
 import nibabel as nib
 
 if __name__ == '__main__':  # add src to sys path & main namespace
-    import sys
     curr_path = pathlib.Path().absolute()
     sys.path.append(str(curr_path.parent.parent))
     from data.utils import natural_sort, correct_df_directories
@@ -96,9 +95,13 @@ def get_task_df(task_name, task_path, df_file=None):
         logging.info(msg)
         df = pd.read_csv(str(default_df))
         df = correct_df_directories(df, task_path)
+        if 'Unnamed: 0' in df:
+            df = df.drop(labels='Unnamed: 0', axis=1)
         return df
 
     df = collect_task_df(task_name, task_path)
+    if 'Unnamed: 0' in df:
+        df = df.drop(labels='Unnamed: 0', axis=1)
     return df
 
 

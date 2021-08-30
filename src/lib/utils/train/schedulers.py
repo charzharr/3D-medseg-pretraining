@@ -4,15 +4,18 @@ Various effective learning rate schedulers taken from literature.
 
 import sys
 import math
+from abc import ABC, abstractmethod
 
 
-class BaseScheduler:
+class BaseScheduler(ABC):
+    
+    @abstractmethod
     def step(self, epoch=-1, val=-1):
         raise NotImplementedError()
     
     def set_lr(self, lr):
         """(1) set all optim param_groups to lr; (2) update self.lr"""
-        for g in self.optimizer.param_groups: # list of dicts with 'lr', 'params'
+        for g in self.optimizer.param_groups: # list of dicts with 'lr','params'
             g['lr'] = lr
         self.lr = self.get_lr()
 
@@ -30,6 +33,8 @@ class Uniform(BaseScheduler):
             if self.rampup_rates[-1] != self.lr:
                 self.rampup_rates.append(self.lr)
             self.set_lr(self.rampup_rates.pop(0))
+        print(f'💠 Uniform scheduler initiated with lr={self.lr:.7f}, \n'
+              f'   rampup_rates={rampup_rates}.')
 
     def step(self, **kws):
         if self.rampup_rates:
@@ -38,7 +43,8 @@ class Uniform(BaseScheduler):
 
 class ExponentialDecay(BaseScheduler):
     """ LR_t = orig_lr * (exp_fac) ^ t """
-    def __init__(self, optimizer, exp_factor=0.9, t=0, minlr=1e-8, rampup_rates=[]):
+    def __init__(self, optimizer, exp_factor=0.9, t=0, minlr=1e-8, 
+                 rampup_rates=[]):
         self.exp_factor = exp_factor
         self.minlr = minlr
         self.optimizer = optimizer
@@ -46,6 +52,9 @@ class ExponentialDecay(BaseScheduler):
 
         self.rampup_rates = rampup_rates
         self.step(epoch=t)   # in-case we start from epoch > 1
+        print(f'💠 ExponentialDecay scheduler initiated with lr={self.lr} \n'
+              f'   exp_factor={exp_factor}, t={t}, minlr={minlr}, \n'
+              f'   rampup_rates={rampup_rates}.')
 
     def step(self, epoch=None, **kws):
         assert epoch is not None, "Need to give epoch."
@@ -67,9 +76,11 @@ class LinearDecay(BaseScheduler):
         self.optimizer = optimizer
         self.lr = self.orig_lr = self.get_lr()
         self.rampup_rates = rampup_rates
-
         self.step_reduction = (self.lr - self.lr * self.end_factor) / T
-        print(f"\t (LinearDecay) Scheduler initialized with final lr={self.lr * self.end_factor:.8f}.")
+        print(f'💠 LinearDecay scheduler initiated with lr={self.lr} \n'
+              f'   end_factor={end_factor}, T={T}, '
+              f'reduction_per_step={self.step_reduction:.3f}, \n'
+              f'   minlr={minlr}, rampup_rates={rampup_rates}.')
 
     def step(self, **kws):
         if self.rampup_rates:
@@ -92,6 +103,8 @@ class ConsistencyCosineDecay(BaseScheduler):
 
         self.rampup_rates = rampup_rates
         self.step(epoch=t)   # in-case we start from epoch > 1
+        print(f'💠 ConsistencyCosine scheduler initiated with lr={self.lr} \n'
+              f'   t={t}, T={T}, minlr={minlr}, rampup_rates={rampup_rates}.')
 
     def step(self, epoch=None, **kws):
         assert epoch is not None, "Need to give epoch."
@@ -115,6 +128,8 @@ class CosineDecay(BaseScheduler):
 
         self.rampup_rates = rampup_rates
         self.step(epoch=t)   # in-case we start from epoch > 1
+        print(f'💠 CosineDecay scheduler initiated with lr={self.lr} \n'
+              f'   t={t}, T={T}, minlr={minlr}, rampup_rates={rampup_rates}.')
 
     def step(self, epoch=None, **kws):
         assert epoch is not None, "Need to give epoch."
@@ -148,6 +163,10 @@ class StepDecay(BaseScheduler):
             if self.rampup_rates[-1] != self.lr:
                 self.rampup_rates.append(self.lr)
             self.set_lr(self.rampup_rates.pop(0))
+        print(f'💠 StepDecay scheduler initiated with lr={self.lr} \n'
+              f'   factor={factor}, T={T}, step_epochs={self.step_epochs}, '
+              f'steps={steps}, \n'
+              f'   rampup_rates={rampup_rates}.')
 
     def step(self, epoch=None, **kws):
         assert epoch is not None
@@ -170,7 +189,10 @@ class ReduceOnPlateau(BaseScheduler):
         self.patience = patience
         self.lowerbetter = lowerbetter
         
-        self.best_val = sys.float_info.max if lowerbetter else -sys.float_info.max
+        if lowerbetter:
+            self.best_val = sys.float_info.max
+        else: 
+            self.best_val = -sys.float_info.max
         self.bad_iter_count = 0
 
         self.optimizer = optimizer
@@ -181,6 +203,9 @@ class ReduceOnPlateau(BaseScheduler):
             if self.rampup_rates[-1] != self.lr:
                 self.rampup_rates.append(self.lr)
             self.set_lr(self.rampup_rates.pop(0))
+        print(f'💠 ReduceOnPlateau scheduler initiated with lr={self.lr} \n'
+              f'   factor={factor}, patience={patience}, '
+              f'low_better={lowerbetter}, \n   rampup_rates={rampup_rates}.')
     
     def step(self, val=None, **kws):
         assert val is not None, "Need to give step a val."
@@ -235,8 +260,10 @@ if __name__ == '__main__':
     optimizer = get_optim()
     cos = CosineDecay(optimizer, T, t=0)
     step = StepDecay(optimizer, T, factor=FACTOR, steps=[5,10,15,25])
-    plat_l = ReduceOnPlateau(optimizer, factor=FACTOR, patience=5, lowerbetter=True)
-    plat_h = ReduceOnPlateau(optimizer, factor=FACTOR, patience=5, lowerbetter=False)
+    plat_l = ReduceOnPlateau(optimizer, factor=FACTOR, patience=5, 
+                             lowerbetter=True)
+    plat_h = ReduceOnPlateau(optimizer, factor=FACTOR, patience=5, 
+                             lowerbetter=False)
     
     schedulers = [cos, step, plat_l, plat_h]
     lrs = []
@@ -246,7 +273,7 @@ if __name__ == '__main__':
 
     cos_ans = [0.5 * (1 + math.cos(math.pi*e/T)) * LR for e in range(1, T+1)]
     step_ans = [LR]*4 + [LR*FACTOR]*5 + [LR*FACTOR**2]*5 + [LR*FACTOR**3]*6
-    plat_lower_ans = [LR]*5 + [LR*FACTOR]*5 + [LR*FACTOR**2]*5 + [LR*FACTOR**3]*5
+    plat_lower_ans = [LR]*5 + [LR*FACTOR]*5 + [LR*FACTOR**2]*5+[LR*FACTOR**3]*5
     plat_higher_ans = [LR]*20
     ans = [cos_ans, step_ans, plat_lower_ans, plat_higher_ans]
 
@@ -259,8 +286,10 @@ if __name__ == '__main__':
     cos = CosineDecay(optimizer, T, t=5)
     optimizer = get_optim()
     step = StepDecay(optimizer, T, factor=FACTOR, steps=[5,10,15,25])
-    plat_l = ReduceOnPlateau(optimizer, factor=FACTOR, patience=5, lowerbetter=True)
-    plat_h = ReduceOnPlateau(optimizer, factor=FACTOR, patience=5, lowerbetter=False)
+    plat_l = ReduceOnPlateau(optimizer, factor=FACTOR, patience=5, 
+                             lowerbetter=True)
+    plat_h = ReduceOnPlateau(optimizer, factor=FACTOR, patience=5, 
+                             lowerbetter=False)
     
     schedulers = [cos, step, plat_l, plat_h]
     lrs = []
@@ -270,7 +299,7 @@ if __name__ == '__main__':
 
     cos_ans = [0.5 * (1 + math.cos(math.pi*e/T)) * LR for e in range(5, T+1)]
     step_ans = [LR*FACTOR]*5 + [LR*FACTOR**2]*5 + [LR*FACTOR**3]*6
-    plat_lower_ans = [LR]*5 + [LR*FACTOR**1]*5 + [LR*FACTOR**2]*5 + [LR*FACTOR**3]
+    plat_lower_ans = [LR]*5 + [LR*FACTOR**1]*5 + [LR*FACTOR**2]*5+[LR*FACTOR**3]
     plat_higher_ans = [LR]*16
     ans = [cos_ans, step_ans, plat_lower_ans, plat_higher_ans]
 

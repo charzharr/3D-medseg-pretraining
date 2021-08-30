@@ -2,13 +2,27 @@
 <project version="4">
   <component name="ChangeListManager">
     <list default="true" id="3ef58f58-5b68-4b28-b55b-5df8a6c592c8" name="Changes" comment="">
-      <change afterPath="$PROJECT_DIR$/src/data/utils.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/[Project] 3D Segmentation Pretraining.iml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/[Project] 3D Segmentation Pretraining.iml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/pgl.ipynb" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.gitignore" beforeDir="false" afterPath="$PROJECT_DIR$/.gitignore" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/configs/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/configs/__init__.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/configs/finetune.yaml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/configs/pretrain.yaml" beforeDir="false" />
       <change beforePath="$PROJECT_DIR$/src/data/bcv/dataset.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/data/bcv/dataset.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/data/decathlon/dataset.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/data/decathlon/dataset.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/data/kits19/dataset.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/data/kits19/dataset.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/data/utils.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/data/utils.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/experiments/finetune/finetune.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/experiments/pgl/configs/pgl_base.yaml" beforeDir="false" afterPath="$PROJECT_DIR$/src/experiments/pgl/configs/pgl_base.yaml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/experiments/pgl/data_setup.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/experiments/pgl/data_setup.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/experiments/pgl/run_experiment.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/experiments/pgl/run_experiment.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/experiments/setup.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/experiments/setup.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/lib/assess/losses3d.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/lib/assess/losses3d.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/lib/assess/metrics3d.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/lib/nets/unet3d.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/lib/utils/train/schedulers.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/lib/utils/train/schedulers.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/run.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/run.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/scripts/finetune.sh" beforeDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -19,6 +33,7 @@
     <option name="RECENT_TEMPLATES">
       <list>
         <option value="Python Script" />
+        <option value="Jupyter Notebook" />
       </list>
     </option>
   </component>
@@ -61,7 +76,8 @@
       <option name="presentableId" value="Default" />
       <updated>1629392036531</updated>
       <workItem from="1629392038984" duration="9848000" />
-      <workItem from="1629580748399" duration="9130000" />
+      <workItem from="1629580748399" duration="9832000" />
+      <workItem from="1630300816359" duration="116000" />
     </task>
     <servers />
   </component>

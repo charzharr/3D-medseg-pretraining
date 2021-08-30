@@ -15,6 +15,30 @@ import torch.nn.functional as F
 REDUCTIONS = ['mean', 'sum', 'class', 'none']
 
 
+class BYOL3d:
+    def __init__(self):
+        print(f'💠 Criterion: BYOL3d initiated.')
+        
+    def __call__(self, pred, targ):
+        """
+        Args:
+            pred: features outputted from projection head + prediction head
+                  NxCxHxWxD
+            targ: features outputted by EMA model + EMA projection head
+                  NxCxHxWxD
+        """
+        msg = f'Pred & Targ shape mismatch: {pred.shape} {targ.shape}.'
+        assert pred.shape == targ.shape, msg
+        
+        pred = pred.view(pred.shape[0], -1)
+        targ = targ.view(targ.shape[0], -1)
+        pred_norm = F.normalize(pred, dim=-1, p=2)
+        targ_norm = F.normalize(targ, dim=-1, p=2)
+        loss = torch.sum(2 - 2 * (pred_norm * targ_norm).sum(dim=-1))
+        loss /= pred.shape[0]
+        return loss
+
+
 class DiceLoss3d:
     """ Good for both 2D and 3D tensors. Assumes pred.shape == targ.shape. 
     Whether it is soft-dice or dice depends on whether predictions are 
@@ -47,7 +71,7 @@ class DiceCrossEntropyLoss3d:
     
     def __call__(self, pred, targ):
         ce_loss = cross_entropy_loss(pred, targ, weights=self.weights,
-                                  reduction='mean')
+                                     reduction='mean')
         dice_loss = dice_loss(pred, targ)
         return self.alpha * dice_loss + (1 - self.alpha) * ce_loss
     

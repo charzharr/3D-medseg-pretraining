@@ -1,0 +1,69 @@
+
+# ---- ##  Experiment Setup, Logging Specifications, Environment  ## ---- #
+experiment:
+  description: |
+    > Reimplementation of PGL for 3D segmentation pretraining.
+    >   Data: ~1400 volumes from KiTS & MSD Hepatic  Vessel, Pancreas, Lung Tumor, Liver, Spleen.
+  id: "(0829)bcv-scratch_dice+ce_a1"     # for wandb run identification
+  name: 'finetune_bcv'   # for experiment module identification
+  project: '3DSeg-Pretrain'
+
+  debug:                                            # (Correct Alignment)
+    mode: False                                     # < Check
+    overfitbatch: True                             # < Check
+    wandb: False                                     # < Check
+    save: False                                      # < Check
+    break_train_iter: False                         # < Check
+    break_test_iter: False                          # < Check
+    test_every_n_epochs: 1
+  seed: 420
+  hpsamp: ""
+
+
+# ---- ##  Data Preprocessing, Loading, Transformation  ## ---- #
+data:  # describing project-wide data specifications
+  kits18: ''
+  msd: ''
+  bcv:
+    split: '60-20-20_1.csv'
+
+
+# ---- ##  Training: iterations, criterion, optimization, etc.  ## ---- #
+train:
+  start_epoch: 0
+  epochs: 400
+  batch_size: 8
+  examples_per_volume: 4
+
+  criterion:
+    name: 'dice-ce'
+    dice-ce:
+      alpha: 0.5
+
+  optimizer:
+    name: 'adam'  # sgd, nesterov, adam
+    lr: .0002
+    wt_decay: 0 # 0.0001
+    adam:
+      betas: [0.9, 0.999]
+
+  scheduler:
+    name: 'step'
+    rampup_rates: []
+    min_lr: 0.000001
+    
+    step:
+      factor: 0.1
+      steps: [0.4, 0.6, 0.8]
+
+
+# Model / Criterion / Other nn.Module Specifications
+model:
+  name: 'unet3d-pgl'
+
+  ema: True
+  alpha: 0.99
+  num_classes: -1
+
+
+

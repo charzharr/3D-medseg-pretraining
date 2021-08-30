@@ -8,16 +8,23 @@ __pycache__/
 *.pyd
 *.pyi
 
-# PyTorch
+# Model Files
 *.pth
+*.pt
+*.model
 
-# Visual Studio Code files
+# IDE Code files
+.idea/
 .vscode
 .vs
 
 # OSX or Linux Crumbs
 .DS_Store
 .swp
+
+# Images, Data Samples
+tests/
+samples/
 
 # Misc - Project Specific
 archive/
@@ -26,5 +33,3 @@ analysis/
 wandb/
 wandb_login.sh
 
-tests/
-samples/

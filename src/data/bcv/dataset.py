@@ -22,7 +22,7 @@ Resources
  - https://www.synapse.org/#!Synapse:syn3193805/wiki/217789
 """
 
-import os
+import os, sys
 import pathlib
 import logging
 import time
@@ -32,7 +32,6 @@ from collections import OrderedDict
 import nibabel as nib
 
 if __name__ == '__main__':  # add src to sys path & main namespace
-    import sys
     curr_path = pathlib.Path().absolute()
     sys.path.append(str(curr_path.parent.parent))
     from data.utils import natural_sort, correct_df_directories
@@ -84,6 +83,9 @@ def get_df(df_file=None, dataset_path=DATASET_DIR):
     else:
         df = collect_df(dataset_path)
     df = correct_df_directories(df, dataset_path)
+    
+    if 'Unnamed: 0' in df:
+        df = df.drop(labels='Unnamed: 0', axis=1)
     return df
 
 

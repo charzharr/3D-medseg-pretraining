@@ -10,7 +10,8 @@ Resources
  - https://github.com/neheller/kits19
 """
 
-import os
+import os, sys
+import logging
 import pathlib
 import csv
 import pandas as pd
@@ -22,7 +23,6 @@ from collections import OrderedDict
 import torch, torchvision
 
 if __name__ == '__main__':  # add src to sys path & main namespace
-    import sys
     curr_path = pathlib.Path().absolute()
     sys.path.append(str(curr_path.parent.parent))
     from data.utils import natural_sort, correct_df_directories
@@ -60,11 +60,13 @@ def get_df(df_file=None, dataset_path=DATASET_DIR):
     ds_path = pathlib.Path(dataset_path)
     default_df = ds_path / 'default_df.csv'
     if default_df.exists():
-        print(f"Loading default KiTS df ({default_df.absolute()}).")
+        logging.info(f"Loading default KiTS df ({default_df.absolute()}).")
         df = pd.read_csv(str(default_df))
     else:
         df = collect_df(dataset_path)
     df = correct_df_directories(df, dataset_path)
+    if 'Unnamed: 0' in df:
+        df = df.drop(labels='Unnamed: 0', axis=1)
     return df
 
 

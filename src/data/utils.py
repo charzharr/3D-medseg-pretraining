@@ -1,4 +1,5 @@
 
+import math
 import logging
 import pathlib
 import re
@@ -59,9 +60,9 @@ def correct_df_directories(df, path):
 def split(indices, train=0.6, val=0.2, test=0.2):
     indices = set(indices)
     train = random.sample(indices, k=math.ceil(0.6 * len(indices)))
-    indices = indices - train
-    test = random.sample(indices, k=math.ceil(0.2 * len(indices)))
-    val = indices = test
-    return train, val, test
+    val_test_indices = indices - set(train)
+    test = random.sample(val_test_indices, k=math.ceil(0.2 * len(indices)))
+    val = list(val_test_indices - set(test))
+    return sorted(train), sorted(val), sorted(test)
 
 

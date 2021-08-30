@@ -1,6 +1,14 @@
 """ Module pgl/run_experiment.py
 Reimplementation of Prior-Guided Learning paper.
     https://arxiv.org/abs/2011.12640
+    
+PGL Training Details:
+    - Volume [-1024, 325], znorm -> 16x96x96 patches
+    - 128 batch size
+    - Trained via LARS (cosine lr, 2 epoch warmup, 0.2 LR) for 500 epochs
+
+Implementation Notes:
+    - Baseline use of Adam with 
 """
 
 import sys, os
@@ -14,10 +22,13 @@ import torch, torchvision
 import torch.nn as nn
 from torch.utils.data import DataLoader
 
-import experiments, lib
-from experiments import setup, data_setup
-from lib.utils import devices, timers, statistics, ramps, metrics
-from lib.data.samplers import TwoStreamBatchSampler
+from experiments import setup
+from experiments.pgl import data_setup
+from lib.utils import devices, timers, statistics
+from lib.utils.train import ramps
+from lib.utils.io import output
+from lib.nets.ema import create_ema_model, update_ema_model
+
 
 
 WATCH = timers.StopWatch()
@@ -35,14 +46,18 @@ SUMMARIZE = {
 
 
 def run(cfg, checkpoint=None):
-    # Experiment Setup: device, tracker
+    
+    # ------------------ ##  Experiment Setup  ## ------------------ #
+    
+    output.header_one('I. PGL Training Components Setup')
+    
     global gpu_indices
     global device
     gpu_indices = cfg['experiment']['gpu_idxs']
     device = cfg['experiment']['device']
     debug = cfg['experiment']['debug']
 
-    print(f"[Experiment Settings (@supervised/emain.py)]")
+    print(f"[Experiment Settings (@pgl/run_experiment.py)]")
     print(f" > Prepping train config..")
     print(f"\t - experiment:  {cfg['experiment']['project']} - "
           f"{cfg['experiment']['name']}, id({cfg['experiment']['id']})")
@@ -67,45 +82,35 @@ def run(cfg, checkpoint=None):
     tracker = statistics.WandBTracker(wandb_settings=wandb_settings)
 
     # Training Components: model, criterion, optimizer, scheduler
-    model_d = setup.get_model(cfg)
-    model = model_d['model'].to(device)  # no ema for fully sup
-    ema_model = None
-    if 'ema_model' in model_d:
-        ema_model = model_d['ema_model'].to(device)
-        ts = [s.replace('ep_', 'ep_ema_') for s in list(SUMMARIZE['triggers'])]
-        SUMMARIZE['triggers'] += ts
-        ss = [s.replace('ep_', 'ep_ema_') for s in list(SUMMARIZE['saves'])]
-        SUMMARIZE['saves'] += ss
-
+    output.header_three('Model Setup')
+    from .pgl_unet3d import UNet3D
+    model = UNet3D(n_input=1, n_class=1, act='relu')
+    ema_model = create_ema_model(UNet3D(n_input=1, n_class=1, act='relu'))
+    model, ema_model = model.to(device), ema_model.to(device)
     if len(gpu_indices) > 1:
+        print(f'  * {len(gpu_indices)} GPUs, using nn.DataParallel.')
         model = nn.DataParallel(model)
-        ema_model = nn.DataParallel(ema_model) if ema_model is not None else None
+        ema_model = nn.DataParallel(ema_model)
 
-    ds = cfg['data']['name']
-    lab_criterion = setup.get_criterion(cfg['lab_criterion'], dataset=ds).to(device)
+    output.header_three('Criterion + Optimizer + Scheduler Setup')
+    from lib.assess.losses3d import BYOL3d
+    criterion = BYOL3d()
+    
     optimizer = setup.get_optimizer(cfg, model.parameters())
     scheduler = setup.get_scheduler(cfg, optimizer)
-
+    
     # Data Pipeline
-    data_d = data_setup.get_data_d(cfg)
-    split_df = data_d['df']
+    output.header_three('Data Setup')
+    from .data_setup import get_data_components
+    data_d = get_data_components(cfg)  # PGL: train_df, train_set, train_loader
+    
+    train_df = data_d['train_df']
+    train_set = data_d['train_set']
+    train_loader = data_d['train_loader']
 
-    shuffle_flag = False if debug['overfitbatch'] or debug['mode'] else True
-    train_loader = DataLoader(dataset=data_d['dataset_train'],
-                              num_workers=NUM_WORKERS,
-                              shuffle=shuffle_flag,
-                              batch_size=cfg['train']['batch_size'])
-    val_loader = DataLoader(dataset=data_d['dataset_val'],
-                            num_workers=NUM_WORKERS,
-                            shuffle=False,
-                            batch_size=cfg['test']['batch_size'])
-    test_loader = DataLoader(dataset=data_d['dataset_test'],
-                             num_workers=NUM_WORKERS,
-                             shuffle=False,
-                             batch_size=cfg['test']['batch_size'])
-
-    ### Training Action.
-
+    # ------------------ ##  Training Action  ## ------------------ #
+    
+    output.header_one('II. Training')
     if debug['overfitbatch']:
         batches = []
         for i, batch in enumerate(train_loader):
@@ -115,24 +120,16 @@ def run(cfg, checkpoint=None):
                 break
         train_loader = batches
 
-    df = split_df.copy(deep=True)
     tot_epochs = cfg['train']['epochs'] - cfg['train']['start_epoch']
     global_iter = 0
     for epoch in range(cfg['train']['start_epoch'], cfg['train']['epochs']):
-        print("\n=============================")
-        print(f"Starting Epoch {epoch + 1} (lr: {scheduler.lr:.7f})")
-        print("=============================")
+        output.subsection(f'Starting Epoch {epoch+1} (lr: {scheduler.lr:.7f})')
 
         WATCH.tic('epoch')
         model.train()
-        if ema_model is not None:
-            ema_model.train()
+        ema_model.train()
         epmeter = statistics.EpochMeters()
         WATCH.tic('iter')
-
-        df[f'epoch{epoch}_pred'] = np.nan
-        for ci in range(len(data_d['classes'])):
-            df[f'epoch{epoch}_c{ci}'] = np.nan
 
         for it, batch in enumerate(train_loader):
 
@@ -152,8 +149,7 @@ def run(cfg, checkpoint=None):
                 optimizer.step()
 
                 if ema_model is not None:
-                    update_ema_variables(model, ema_model, cfg['model']['alpha'],
-                                         global_iter, copy=False)
+                    update_ema_model(model, ema_model, cfg.model.alpha)
 
             X, Y, preds = X.detach(), Y.detach(), out.detach().softmax(-1)
             targs = torch.zeros(preds.shape, device=device).scatter_(1, Y.view(-1, 1), 1)
@@ -290,13 +286,6 @@ def test_metrics(model, loader, df, epoch, name='test'):
     )
 
     return metrics_d
-
-
-def update_ema_variables(model, ema_model, alpha, global_step, copy=False):
-    # Use the true average until the exponential average is more correct
-    alpha = min(1 - 1 / (global_step + 1), alpha)
-    for ema_param, param in zip(ema_model.parameters(), model.parameters()):
-        ema_param.data.mul_(alpha).add_(1 - alpha, param.data)
 
 
 def save_model(cfg, state, crit, opt, tracker, epoch):
