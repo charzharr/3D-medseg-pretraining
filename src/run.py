@@ -10,20 +10,23 @@ Main job: call appropriate experiment main.py file and pass on env args.
 import sys, os
 import math, random
 import numpy as np
+np.set_printoptions(precision=3)
 
 import wandb
 import click
 import torch
 
 import configs, experiments
-from experiments.finetune import finetune as finetune_main
-from experiments.pretrain import byol as byol_main
+from experiments.pgl import run_experiment as run_pgl
+from experiments.finetune_bcv import run_experiment as run_finetune_bcv
+# from experiments.finetune import run_experiment as run_finetune
+
 
 
 USER_CHOICES = ("charzhar", "yzhang46")
 EXPERIMENTS = {
-    'finetune': finetune_main,
-    'byol': byol_main
+    'pgl': run_pgl,
+    'finetune_bcv': run_finetune_bcv,
 }
 
 

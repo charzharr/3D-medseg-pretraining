@@ -15,6 +15,30 @@ import torch.nn.functional as F
 REDUCTIONS = ['mean', 'sum', 'class', 'none']
 
 
+class BYOL3d:
+    def __init__(self):
+        print(f'💠 Criterion: BYOL3d initiated.')
+        
+    def __call__(self, pred, targ):
+        """
+        Args:
+            pred: features outputted from projection head + prediction head
+                  NxCxHxWxD
+            targ: features outputted by EMA model + EMA projection head
+                  NxCxHxWxD
+        """
+        msg = f'Pred & Targ shape mismatch: {pred.shape} {targ.shape}.'
+        assert pred.shape == targ.shape, msg
+        
+        pred = pred.view(pred.shape[0], -1)
+        targ = targ.view(targ.shape[0], -1)
+        pred_norm = F.normalize(pred, dim=-1, p=2)
+        targ_norm = F.normalize(targ, dim=-1, p=2)
+        loss = torch.sum(2 - 2 * (pred_norm * targ_norm).sum(dim=-1))
+        loss /= pred.shape[0]
+        return loss
+
+
 class DiceLoss3d:
     """ Good for both 2D and 3D tensors. Assumes pred.shape == targ.shape. 
     Whether it is soft-dice or dice depends on whether predictions are 
@@ -44,12 +68,25 @@ class DiceCrossEntropyLoss3d:
     def __init__(self, weights=None, alpha=0.5):
         self.weights = weights
         self.alpha = alpha
+
+        name = type(self).__name__
+        print(f'💠 {name} initiated with weights={self.weights}, \n'
+              f'   alpha={self.alpha}.')
     
     def __call__(self, pred, targ):
+        """
+        Args:
+            pred: BxCxDxHxW logits
+            targ: BxCxDxHxW one hot binary mask
+        """
+        # Activation
+        pred = pred.softmax(1)
         ce_loss = cross_entropy_loss(pred, targ, weights=self.weights,
-                                  reduction='mean')
-        dice_loss = dice_loss(pred, targ)
-        return self.alpha * dice_loss + (1 - self.alpha) * ce_loss
+                                     reduction='mean')
+        dc_loss = dice_loss(pred, targ, ignore_background=False)
+        # print('Mine', dc_loss, ce_loss)
+        return dc_loss + ce_loss
+        return self.alpha * dc_loss + (1 - self.alpha) * ce_loss
     
 
         
@@ -59,7 +96,7 @@ class DiceCrossEntropyLoss3d:
 ### ======================================================================== ###
 
 
-def dice_loss(pred, targ, s=1):
+def dice_loss(pred, targ, s=1, ignore_background=False, reduction='mean'):
     """ Dice loss. Assumes targ is in one-hot format. 
     Parameters
         pred - prediction image probabilities [any shape]
@@ -67,11 +104,23 @@ def dice_loss(pred, targ, s=1):
         s (float) - smoothing factor added to the numerator and denominator.
     """
     assert pred.shape == targ.shape 
-    pred_flat = pred.view(-1).float()
-    targ_flat = targ.view(-1).float()
-    intersection = (pred_flat, targ_flat).sum()
-    dice = (2 * intersection + s) / (pred_flat.sum() + targ_flat.sum() + s)
-    return 1 - dice
+    assert 0 <= pred.min() <= pred.max() <= 1, '"pred" must be probabilities'
+
+    # Calculate soft dice
+    if ignore_background:
+        pred = pred[:, 1:] if pred.shape[1] > 1 else pred
+        targ = targ[:, 1:] if targ.shape[1] > 1 else targ
+    B, C = pred.shape[:2]
+
+    pred_flat = pred.view(B, C, -1).float()
+    targ_flat = targ.view(B, C, -1).float()
+    intersec = (pred_flat * targ_flat).sum(-1)  # Shape BxC
+    dice = 1 - (2 * intersec + s) / (pred_flat.sum(-1) + targ_flat.sum(-1) + s)
+    # Dice is BxC, reduce to mean?
+    if reduction == 'sum':
+        return dice.sum()
+    else:
+        return dice.mean()
 
 
 def cross_entropy_loss(pred, targ, weights=None, reduction='mean'):

@@ -1,0 +1,82 @@
+
+# ---- ##  Experiment Setup, Logging Specifications, Environment  ## ---- #
+experiment:
+  description: |
+    > Experiment for 3D pretraining project. 
+  id: "(monthday)experiment_data_optim_run"    # for easy wandb run IDing
+  name: 'finetune'   # for experiment module IDing (defined in run.py)
+  project: '3DSeg-Pretrain'
+  debug:                                            # (Correct Alignment)
+    mode: False                                     # < Check
+    overfitbatch: False                             # < Check
+    wandb: True                                     # < Check
+    save: True                                      # < Check
+    break_train_iter: False                         # < Check
+    break_test_iter: False                          # < Check
+    test_every_n_epochs: 1
+  seed: 420
+  hpsamp: ""
+
+
+# ---- ##  Data Preprocessing, Loading, Transformation  ## ---- #
+data:  # describing project-wide data specifications
+  kits18: ''
+  msd: ''
+  bcv: ''
+
+
+# ---- ##  Training: iterations, criterion, optimization, etc.  ## ---- #
+train:
+  start_epoch: 0
+  epochs: 100
+  batch_size: 32
+  
+  criterion:
+    name: 'byol'
+    byol:
+      p_norm: 2
+    dice-ce:
+      alpha: 0.5
+
+  optimizer:
+    name: 'adam'  # sgd, nesterov, adam
+    lr: .001
+    wt_decay: 0 # 0.0001
+    adam:
+      betas: [0.9, 0.999]
+    sgd:
+      momentum: 0.9
+    nesterov:
+      momentum: 0.9
+
+  scheduler:             # Choices: uniform, step, pleateua, 
+    name: 'exponential'  #   exponential, linear, consistencycosine
+    rampup_rates: []     # LR warmup.
+    min_lr: 0.000001
+    exponential:
+      exp_factor: 0.92
+    linear:               # if init lr is 1 & end_factor=0.1, then linearly 
+      end_factor: 0.01    #   ramps down to 0.01 (ramp-down depends on T)
+    plateau:
+      factor: 0.5         # scaled reduction of lr when plateau is hit
+      patience: 2         # number of epochs to tolerate no improvement
+    step:
+      factor: 0.1
+      steps: [0.33, 0.66] # percentage of total epochs to step 
+
+
+# ---- ##  Model Specifications  ## ---- #
+model:
+  name: 'unet3d'
+  
+  ema: True
+  alpha: 0.99
+  num_classes: -1         # <= 0 means to automatically deduce from data
+
+  unet3d:
+    spec: 'unet3d'
+
+
+  
+    
+  

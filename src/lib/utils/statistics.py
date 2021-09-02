@@ -1,8 +1,9 @@
 
+import collections
 import numbers
 import matplotlib.pyplot as plt
 import numpy as np
-import collections
+import torch
 import wandb
 
 
@@ -191,7 +192,49 @@ class EpochMeters:
             else:
                 ret[k] = v/self.ns[k]
         return ret
-        
+
+
+class EpochMetrics(dict):
+    """ Aggregates all the final tracked metrics for an epoch. """
+
+    def __init__(self, *args, **kwargs):
+        super(EpochMetrics, self).__init__(*args, **kwargs)
+        self.__dict__ = self
+
+    def update(self, new_metrics, keys=None, new_key_start=''):
+        """ Update epoch metrics to be printed or serialized later. 
+        Args:
+            new_metrics: dictionary of new metrics to be updated
+            keys: list of keys to look for in new_mets to update
+            new_key_start: beginning of key string to be stored
+                e.g. 'train_', then a new met called 'F1' -> 'train_f1'
+        """
+        if not new_metrics:
+            return
+        for k, v in new_metrics.items():
+            if keys and k not in keys:
+                continue
+            new_k = str(new_key_start) + k.lower()
+            if new_k in self.keys():
+                warnings.warn(f'(EpochMetrics) Key {new_k} overwritten.')
+            if isinstance(v, torch.Tensor) or isinstance(v, np.ndarray):
+                v = v.tolist()  # scalars return scalars here, not lists
+            self[new_k] = v
+    
+    def print(self, pre='', ret_string=False):
+        string = str(pre)
+        for k, v in self.items():
+            if isinstance(v, numbers.Number) and float(v).is_integer():
+                v_string = f'{v:d}'
+            elif isinstance(v, float):
+                v_string = f'{v:.4f}'
+            elif isinstance(v, collections.Sequence):
+                v_string = f'{np.array(v)}'
+            string += f'  {k: <21} {v_string}\n'
+
+        if ret_string:
+            return string
+        print(string)
 
 # Basic Tests
 if __name__ == '__main__':
