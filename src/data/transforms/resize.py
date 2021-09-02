@@ -117,12 +117,20 @@ class Resize3d(Transform):
         else:
             image = image.unsqueeze(0).unsqueeze(0)
         
+        dtype = image.dtype
+        if 'float' not in str(dtype):
+            image = image.float()
+        
+        align_applies = 'linear' in interpolation or interpolation == 'bicubic'
         ret_image = torch.nn.functional.interpolate(  
             image,
             size=size,
             mode=interpolation,
-            # align_corners=False,
+            align_corners=False if align_applies else None   # damn warning.
         )
+        
+        if ret_image.dtype != dtype:
+            ret_image = ret_image.to(dtype)
         
         if len(shape) == 4:
             return ret_image

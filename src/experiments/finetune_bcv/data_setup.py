@@ -20,7 +20,6 @@ import collections
 import multiprocessing
 from collections import OrderedDict
 import pandas as pd
-import SimpleITK as sitk
 
 import torch
 import torchio
@@ -30,8 +29,10 @@ from dmt.utils.io.images3d import resample_sitk_isotropic
 from dmt.data import OneToManyLoader
 
 import data.transforms as myT
-from data.bcv.dataset import get_df as get_bcv_df
+from data.bcv.dataset import get_df as get_bcv_df, CLASSES as bcv_classes
 from data.utils import split
+
+import SimpleITK as sitk
 
 
 # Data Setup & Loading Constants
@@ -66,6 +67,9 @@ def get_data_components(cfg):
             if not df_path.exists():
                 raise RuntimeError(f'Given {str(split_path)} does not exist.')
             df = pd.read_csv(df_path)
+    from data.bcv.dataset import DATASET_DIR as bcv_dataset_path
+    from data.utils import correct_df_directories
+    df = correct_df_directories(df, bcv_dataset_path)
     if 'Unnamed: 0' in df:
         df = df.drop(labels='Unnamed: 0', axis=1)
         
@@ -79,14 +83,14 @@ def get_data_components(cfg):
     for i, S in df.iterrows():
         sample_args.append((i, S['id'], S['image'], S['mask'], S['imgsize'],
                             S['subset']))
-    with multiprocessing.pool.ThreadPool() as pool:  # took 5 sec to load BCV
+    with multiprocessing.pool.ThreadPool(12) as pool:  # took 5 sec to load BCV
         samples = pool.map(_get_sample, sample_args)
     # samples = map(_get_sample, sample_args)
     print(f'[Took {time.time() - start:.2f}s to get samples!]')
     
     train_samples, val_samples, test_samples = [], [], []
     for sample in samples:
-        print(sample.image.spacing)
+        # print(sample.image.spacing)
         if sample.subset == 'train':
             train_samples.append(sample)
         elif sample.subset == 'val':
@@ -99,11 +103,7 @@ def get_data_components(cfg):
     val_set = BCVSampleSet(cfg, val_samples)
     test_set = BCVSampleSet(cfg, test_samples)
     
-    print(f'Train_set: {train_set}')
-    print(f'val_set: {val_set}')
-    print(f'Test_set: {test_set}')
-    
-    print(f'[Took {time.time() - start:.2f} sec.]')
+    print(f'[Took {time.time() - start:.2f} sec to load all data.]')
     
     debug = cfg.experiment.debug
     shuffle = False if debug.overfitbatch or debug.mode else True
@@ -113,7 +113,7 @@ def get_data_components(cfg):
         batch_size=cfg.train.batch_size,
         collate_fn=collate,
         num_workers=NUM_WORKERS,
-        prefetch_factor=4 if NUM_WORKERS > 0 else 2
+        prefetch_factor=2 if NUM_WORKERS > 0 else 2
     )
     print(f'Torch Dataloader initialized with {NUM_WORKERS} workers!')
     
@@ -207,11 +207,15 @@ class BCVSampleSet(SampleSet):
         self.cfg = cfg
         self.crops_per_volume = cfg.train.examples_per_volume if is_train else 1
         self.is_train = is_train
+
+        self.class_names = ['background'] + bcv_classes
+        self.num_classes = len(self.class_names)
+
         super().__init__(samples)
         
         # Preprocessing transforms
         if self.is_train:
-            self.crop = myT.ScaledUniformCropper3d((48, 160, 160), 
+            self.crop = myT.ScaledUniformCropper3d((48, 128, 128), 
                                                    scale_range=(0.8, 1.2))
             self.transforms = [
                 myT.Flip3d(p=0.5),
@@ -221,6 +225,9 @@ class BCVSampleSet(SampleSet):
                 myT.ScaleIntensity(p=0.5, scale=(0.75, 1.25)),
                 myT.Gamma(p=0.5, gamma=(0.7, 1.5))
             ]
+        print(f'💠 BCVSampleSet created with {len(self.samples)} samples. \n'
+              f'   Train={is_train}, Crops/Vol={self.crops_per_volume}, '
+              f'Virtual-Size={len(self)}')
             
     def __len__(self):
         return len(self.samples) * self.crops_per_volume  # hackey
@@ -240,6 +247,7 @@ class BCVSampleSet(SampleSet):
         
         sitk_image = sample.image.sitk_image  # loads path to sitk obj
         tensor = torch.tensor(sitk.GetArrayFromImage(sitk_image)).float()
+        assert 'float32' in tensor.dtype
         
         sitk_mask = sample.mask.sitk_image
         mask_tens = torch.tensor(sitk.GetArrayFromImage(sitk_mask))

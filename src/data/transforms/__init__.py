@@ -15,4 +15,5 @@ from .gamma import Gamma
 # Crops (not subclassed by transforms)
 from .crops.scaled_overlap_crop import ScaledOverlapCropper3d
 from .crops.scaled_uniform_crop import ScaledUniformCropper3d
+from .crops.inference import ChopBatchAggregate3d
 

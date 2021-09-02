@@ -35,9 +35,17 @@ class ZNormalize(Transform):
         for k, v in data.items():
             if 'image' in k:
                 image = v
+                if isinstance(image, torch.Tensor):
+                    dtype = image.dtype
+                    if 'float' not in str(dtype):
+                        image = image.double()
+                
                 mean = image.mean()
                 std = image.std()
                 t_image = ZNormalize.z_normalize(image, mean, std)
+                
+                if isinstance(t_image, torch.Tensor):
+                    t_image = t_image.float()
                 ret_data[k] = t_image
                 
                 ret_records[k] = {

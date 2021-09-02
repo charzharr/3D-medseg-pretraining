@@ -1,7 +1,7 @@
 #!/bin/bash
 
-#$ -N save_debug
-#$ -o "/afs/crc.nd.edu/user/y/yzhang46/_3DPRE/src/experiments/finetune_bcv/artifacts/out.log"
+#$ -N 3DPre_finetune
+#$ -o "/afs/crc.nd.edu/user/y/yzhang46/_3DPRE/src/experiments/finetune/artifacts/out.log"
 
 #$ -M yzhang46@nd.edu
 #$ -m abe                # Send mail when job begins, ends and aborts
@@ -10,11 +10,11 @@
 #$ -q long          
 
 #$ -q gpu@@csecri-p100   # gpu@@csecri-p100, gpu@@csecri-titanxp 
-#$ -l gpu_card=1     
+#$ -l gpu_card=2     
 
 
 export PROJ_PATH="/afs/crc.nd.edu/user/y/yzhang46/_3DPRE"
-export RUN_CFG="./experiments/finetune_bcv/configs/bcv_base.yaml"
+export RUN_CFG="./configs/finetune.yaml"
 export RUN_CHECKPOINT=""
 
 

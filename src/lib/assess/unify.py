@@ -53,3 +53,10 @@ def any(data):
     elif isinstance(data[0], np.ndarray):
         return np.any(data)
     raise ValueError(f'Data can only be a tensor or array, not {type(data)}')
+
+def nan_to_num(data, nan=0):
+    if isinstance(data, torch.Tensor):
+        return torch.nan_to_num(data, nan=nan)
+    elif isinstance(data, np.ndarray):
+        return np.nan_to_num(data, nan=nan)
+    raise ValueError(f'Data can only be a tensor or array, not {type(data)}')

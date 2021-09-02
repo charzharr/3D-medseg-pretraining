@@ -23,7 +23,8 @@ import numpy as np
 import torch
 
 from dmt.metrics.medpy_metrics import dc, jc, hd 
-from .unify import reshape, stack, sum, to_float, allclose, any
+from .unify import (reshape, stack, to_float, allclose, nan_to_num,
+                    any as uni_any, sum as uni_sum)
 from .seg_utils import get_mask_edges, get_surface_distance
 
 
@@ -46,10 +47,12 @@ def batch_cdj_metrics(pred, targ, ignore_background=True):
     
     # Get Dice & Jaccard
     dice = (2 * tp) / (2 * tp + fp + fn)  # BxC
+    dice = nan_to_num(dice, nan=0)
     # dice_sanity = batch_dice(pred, targ)
     # assert allclose(dice, dice_sanity)
     
     jaccard = tp / (tp + fp + fn)  # BxC
+    jaccard = nan_to_num(jaccard, nan=0)
     # jaccard_sanity = batch_jaccard(pred, targ)
     # assert allclose(jaccard, jaccard_sanity)
     
@@ -88,10 +91,10 @@ def batch_confusion_matrix(pred, targ, ignore_background=True):
     tp = to_float((pred_flat + targ_flat) == 2)  # BxCxS
     tn = to_float((pred_flat + targ_flat) == 0)  # BxCxS
 
-    tp = sum(tp, axis=[2])  # BxC
-    tn = sum(tn, axis=[2])  # BxC
+    tp = uni_sum(tp, axis=[2])  # BxC
+    tn = uni_sum(tn, axis=[2])  # BxC
     
-    p = sum(targ_flat, axis=[2])  # BxC, count of all positives
+    p = uni_sum(targ_flat, axis=[2])  # BxC, count of all positives
     n = pred_flat.shape[-1] - p  # BxC, count of all negatives
 
     fn = p - tp
@@ -209,9 +212,9 @@ def batch_hausdorff(
     
     for b, c in np.ndindex(B, C):
         (edges_pred, edges_gt) = get_mask_edges(pred[b, c], targ[b, c])
-        if not any(edges_gt):
+        if not uni_any(edges_gt):
             warnings.warn(f"the ground truth of class {c} is all 0, this may result in nan/inf distance.")
-        if not any(edges_pred):
+        if not uni_any(edges_pred):
             warnings.warn(f"the prediction of class {c} is all 0, this may result in nan/inf distance.")
 
         distance_1 = compute_percent_hausdorff_distance(edges_pred, edges_gt, distance_metric, percentile)

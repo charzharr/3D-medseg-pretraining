@@ -119,8 +119,8 @@ class Gamma(Transform):
         # print('after', bool(torch.isnan(ret_image).any()))
         
         # Normalize intensities to [0, 1]
-        image_range = image_max - image_min + 1e-7  # avoid divide by 0
-        ret_image = (ret_image - image_min) / image_range
+        # image_range = image_max - image_min + 1e-7  # avoid divide by 0
+        # ret_image = (ret_image - image_min) / image_range
     
         return ret_image
 
