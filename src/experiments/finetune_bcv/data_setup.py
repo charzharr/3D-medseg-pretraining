@@ -83,7 +83,7 @@ def get_data_components(cfg):
     for i, S in df.iterrows():
         sample_args.append((i, S['id'], S['image'], S['mask'], S['imgsize'],
                             S['subset']))
-    with multiprocessing.pool.ThreadPool(12) as pool:  # took 5 sec to load BCV
+    with multiprocessing.Pool() as pool:  # took 5 sec to load BCV
         samples = pool.map(_get_sample, sample_args)
     # samples = map(_get_sample, sample_args)
     print(f'[Took {time.time() - start:.2f}s to get samples!]')
@@ -215,7 +215,7 @@ class BCVSampleSet(SampleSet):
         
         # Preprocessing transforms
         if self.is_train:
-            self.crop = myT.ScaledUniformCropper3d((48, 128, 128), 
+            self.crop = myT.ScaledUniformCropper3d(cfg.train.patch_size, 
                                                    scale_range=(0.8, 1.2))
             self.transforms = [
                 myT.Flip3d(p=0.5),
@@ -247,7 +247,7 @@ class BCVSampleSet(SampleSet):
         
         sitk_image = sample.image.sitk_image  # loads path to sitk obj
         tensor = torch.tensor(sitk.GetArrayFromImage(sitk_image)).float()
-        assert 'float32' in tensor.dtype
+        assert 'float32' in str(tensor.dtype)
         
         sitk_mask = sample.mask.sitk_image
         mask_tens = torch.tensor(sitk.GetArrayFromImage(sitk_mask))

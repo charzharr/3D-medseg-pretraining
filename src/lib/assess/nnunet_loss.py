@@ -185,6 +185,11 @@ class SoftDiceLoss(nn.Module):
         self.apply_nonlin = apply_nonlin
         self.smooth = smooth
 
+        name = type(self).__name__
+        print(f'💠 {name} initiated with apply_nonlin={self.apply_nonlin}, \n'
+              f'   ignore_background={not do_bg}, smooth={smooth}, '
+              f'batch_dice={batch_dice}.')
+
     def forward(self, x, y, loss_mask=None):
         shp_x = x.shape
 
@@ -210,7 +215,11 @@ class SoftDiceLoss(nn.Module):
                 dc = dc[:, 1:]
         dc = dc.mean()
 
-        return -dc
+        return {'loss': 1. - dc}
+
+    def get_loss_string(self, out):
+        loss = out['loss'].item()
+        return f'loss {loss:.2f}'
 
 
 class MCCLoss(nn.Module):
@@ -346,9 +355,19 @@ class DC_and_CE_loss(nn.Module):
         self.ignore_label = ignore_label
 
         if not square_dice:
-            self.dc = SoftDiceLoss(apply_nonlin=softmax_helper, **soft_dice_kwargs)
+            self.dc = SoftDiceLoss(apply_nonlin=softmax_helper, 
+                                   **soft_dice_kwargs)
         else:
-            self.dc = SoftDiceLossSquared(apply_nonlin=softmax_helper, **soft_dice_kwargs)
+            self.dc = SoftDiceLossSquared(apply_nonlin=softmax_helper, 
+                                          **soft_dice_kwargs)
+
+        name = type(self).__name__
+        print(f'💠 {name} initiated with ignore_label={ignore_label}, \n'
+              f'   dice_kws={soft_dice_kwargs}, \n'
+              f'   square_dice={square_dice}, log_dice={log_dice}, \n'
+              f'   ce_kws={ce_kwargs}, \n'
+              f'   dc_wt={weight_dice}, ce_wt={weight_ce}, '
+              f'aggregate={aggregate}.')
 
     def forward(self, net_output, target):
         """
@@ -366,21 +385,31 @@ class DC_and_CE_loss(nn.Module):
             mask = None
 
         dc_loss = self.dc(net_output, target, loss_mask=mask) if self.weight_dice != 0 else 0
+        dc_loss = dc_loss['loss']
         if self.log_dice:
             dc_loss = -torch.log(-dc_loss)
 
         ce_loss = self.ce(net_output, target[:, 0].long()) if self.weight_ce != 0 else 0
         if self.ignore_label is not None:
             ce_loss *= mask[:, 0]
-            ce_loss = ce_loss.sum() / mask.sum()
+            ce_loss = ce_loss.sum() / (mask.sum() + 1e-7)
             
-        print('NNuNet', dc_loss, ce_loss)
-
+        # print('NNuNet', dc_loss, ce_loss)
         if self.aggregate == "sum":
             result = self.weight_ce * ce_loss + self.weight_dice * dc_loss
         else:
             raise NotImplementedError("nah son") # reserved for other stuff (later)
-        return result
+        return {
+            'loss': result,
+            'ce': ce_loss,
+            'dc': dc_loss
+        }
+
+    def get_loss_string(self, out):
+        loss = out['loss'].item()
+        ce = out['ce'].item()
+        dc = out['dc'].item()
+        return f'loss {loss:.2f} (ce {ce:.2f}, dc {dc:.2f})'
 
 
 class DC_and_BCE_loss(nn.Module):

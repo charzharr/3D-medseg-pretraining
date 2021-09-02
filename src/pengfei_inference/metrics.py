@@ -22,10 +22,67 @@ from collections import namedtuple
 import numpy as np
 import torch
 
-from dmt.metrics.medpy_metrics import dc, jc, hd 
-from .unify import (reshape, stack, to_float, allclose, nan_to_num,
-                    any as uni_any, sum as uni_sum)
-from .seg_utils import get_mask_edges, get_surface_distance
+
+
+def batch_metrics(preds, targs, ignore_background=False, naive_avg=True):
+    """
+    Args:
+        preds (tensor or array): BxCxDxHxW (binary one-hot)
+        targs: (tensor or array) BxCxDxHxW (binary one-hot)
+        naive_avg: just set to False for inference. May skew results if 
+            a given pred & targ batch doesn't have all classes.
+    """
+    assert preds.shape == targs.shape
+    assert preds.ndim == 5
+    assert 'int' in str(preds.dtype)
+    assert 'int' in str(targs.dtype)
+    
+    cdj_tuple = batch_cdj_metrics(preds, targs,
+                                  ignore_background=ignore_background)
+
+    CM = namedtuple('ConfusionMatrix', ('tp', 'fp', 'fn', 'tn'))
+    nt_conf = cdj_tuple.confusion  # named_tuple: tp, fp, tn, fn
+    nt_conf = CM(np.array(nt_conf.tp), np.array(nt_conf.fp), 
+                 np.array(nt_conf.fn), np.array(nt_conf.tn))
+
+    ec_dice = np.array(cdj_tuple.dice)  # ec = element class
+    ec_jaccard = np.array(cdj_tuple.jaccard)
+    ec_exists = np.array(cdj_tuple.exists)
+
+    with np.errstate(divide='ignore', invalid='ignore'):
+        if naive_avg:
+            dice_class = ec_dice.mean(0)  # shape=(C,)
+            dice_batch = ec_dice.mean(1)
+            dice_mean = dice_batch.mean()
+            jaccard_class = ec_jaccard.mean(0)
+            jaccard_batch = ec_jaccard.mean(1)
+            jaccard_mean = jaccard_batch.mean()
+        else:
+            dice_class = ec_dice.sum(0) / ec_exists.sum(0)
+            dice_batch = ec_dice.sum(1) / ec_exists.sum(1)
+            jaccard_class = ec_jaccard.sum(0) / ec_exists.sum(0)
+            jaccard_batch = ec_jaccard.sum(1) / ec_exists.sum(1)
+            
+            for a in (dice_class, dice_batch, jaccard_class, jaccard_batch):
+                a[a == np.inf] = np.nan
+            batch_exist_count = np.sum(~np.isnan(dice_batch))
+            dice_mean = dice_batch.sum() / batch_exist_count
+            dice_mean = np.nan if dice_mean == np.inf else dice_mean
+            jaccard_mean = jaccard_batch.sum() / batch_exist_count
+            jaccard_mean = np.nan if jaccard_mean == np.inf else jaccard_mean
+
+    return {
+        'confusion_all': nt_conf,  # named tuple
+        'dice_all': ec_dice,
+        'dice_class': dice_class,  # shape=(C,)
+        'dice_batch': dice_batch,  # shape=(B,)
+        'dice_mean': dice_mean,
+        'jaccard_all': ec_jaccard,
+        'jaccard_class': jaccard_class,  # shape=(C,)
+        'jaccard_batch': jaccard_batch,  # shape=(B,)
+        'jaccard_mean': jaccard_mean,
+    }
+
 
 
 
@@ -35,13 +92,17 @@ def batch_cdj_metrics(pred, targ, ignore_background=True):
         pred: BxC(xD)xHxW tensor or array
         targ: BxC(xD)xHxW tensor or array
         ignore_background (bool): flag to ignore first channel dim or not
+    Returns:
+        A namedtuple that has the following keys:
+            - 'confusion' a namedtuple that has tp, fp, fn, tn arrays
+            - 'jaccard' a BxC array of ious (nans are turned into 0s)
+            - 'dice' a BxC array of dice scores (nans are turned into 0s)
     """
     assert type(pred) == type(targ), f'Types: {type(pred)}, {type(targ)}'
     assert isinstance(pred, np.ndarray) or isinstance(pred, torch.Tensor)
     assert pred.shape == targ.shape, f'{pred.shape} {targ.shape} mismatch!'
     
     CM = batch_confusion_matrix(pred, targ, ignore_background=ignore_background)
-
     tp = CM.tp  # BxC
     fp = CM.fp
     fn = CM.fn
@@ -52,6 +113,7 @@ def batch_cdj_metrics(pred, targ, ignore_background=True):
     dice = nan_to_num(dice, nan=0)
     # dice_sanity = batch_dice(pred, targ)
     # assert allclose(dice, dice_sanity)
+
     jaccard = tp / (tp + fp + fn)  # BxC
     jaccard = nan_to_num(jaccard, nan=0)
     # jaccard_sanity = batch_jaccard(pred, targ)
@@ -76,9 +138,9 @@ def batch_confusion_matrix(pred, targ, ignore_background=True):
     assert isinstance(pred, np.ndarray) or isinstance(pred, torch.Tensor)
     assert pred.shape == targ.shape, f'{pred.shape} {targ.shape} mismatch!'
     
-    if isinstance(pred, torch.Tensor):
-        pred = pred.float()
-        targ = targ.float()
+#     if isinstance(pred, torch.Tensor):
+#         pred = pred.float()
+#         targ = targ.float()
     
     if ignore_background:
         pred = pred[:, 1:] if pred.shape[1] > 1 else pred
@@ -89,8 +151,8 @@ def batch_confusion_matrix(pred, targ, ignore_background=True):
     pred_flat = reshape(pred, (B, C, -1))
     targ_flat = reshape(targ, (B, C, -1))
     
-    tp = to_float((pred_flat + targ_flat) == 2)  # BxCxS
-    tn = to_float((pred_flat + targ_flat) == 0)  # BxCxS
+    tp = to_int((pred_flat + targ_flat) == 2)  # BxCxS
+    tn = to_int((pred_flat + targ_flat) == 0)  # BxCxS
 
     tp = uni_sum(tp, axis=[2])  # BxC
     tn = uni_sum(tn, axis=[2])  # BxC
@@ -102,7 +164,7 @@ def batch_confusion_matrix(pred, targ, ignore_background=True):
     fp = n - tn
 
     CM = namedtuple('Confusion', ('tp', 'fp', 'fn', 'tn'))
-    return CM(tp, fp, fn, tn)
+    return CM(tp, fp, fn, tn)  # can be int or long if inputs are int
 
 
 def batch_dice(pred, targ, ignore_background=True):
@@ -179,53 +241,66 @@ def batch_jaccard(pred, targ, ignore_background=True):
     return elem_class_jaccard
 
 
-# ------------ ##  Hausdorff Metric & Helpers  ## ----------- # 
+# ------------ ##  Array and Tensor Unified Functionality  ## ----------- # 
 
-def batch_hausdorff(
-        pred, 
-        targ, 
-        ignore_background=True,
-        distance_metric='euclidean',
-        percentile=None,
-        directed=False
-        ):
-    """ 
-    Args: 
-        pred: BxCxDxHxW binary array or tensor
-        targ: BxCxDxHxW binary array or tensor
-        ignore_background: flag to take out 1st class dimension or not
-        distance_metric: 'euclidean', 'chessboard', 'taxicab'
-        percentile: [0, 100], return percentile of distance rather than max.
-        directed: flag to calculated directed Hausdorff distance or not.
-    """
-    assert type(pred) == type(targ), f'Types: {type(pred)}, {type(targ)}'
-    assert isinstance(pred, np.ndarray) or isinstance(pred, torch.Tensor)
-    assert pred.shape == targ.shape, f'{pred.shape} {targ.shape} mismatch!'
+def reshape(data, shape):
+    if isinstance(data, torch.Tensor):
+        return data.view(*shape)
+    elif isinstance(data, np.ndarray):
+        return data.reshape(*shape)
+    raise ValueError(f'Data can only be a tensor or array, not {type(data)}')
+
+def stack(data, axis):
+    if isinstance(data[0], torch.Tensor):
+        return torch.stack(data, dim=axis)
+    elif isinstance(data[0], np.ndarray):
+        return np.stack(data, axis=axis)
+    raise ValueError(f'Data can only be a tensor or array, not {type(data)}')
+
+def uni_sum(data, axis):  # changed name to uni_sum so doesn't collide with sum
+    if isinstance(data, torch.Tensor):
+        return data.sum(dim=axis)
+    elif isinstance(data, np.ndarray):
+        return data.sum(axis=tuple(axis))
+    raise ValueError(f'Data can only be a tensor or array, not {type(data)}')
+
+def to_float(data):
+    if isinstance(data, torch.Tensor):
+        return data.float()
+    elif isinstance(data, np.ndarray):
+        return data.astype(np.float32)
+    raise ValueError(f'Data can only be a tensor or array, not {type(data)}')
     
-    if ignore_background:
-        pred = pred[:, 1:] if pred.shape[1] > 1 else pred
-        targ = targ[:, 1:] if targ.shape[1] > 1 else targ
+def to_int(data):
+    if isinstance(data, torch.Tensor):
+        return data.int()
+    elif isinstance(data, np.ndarray):
+        return data.astype(np.int32)
+    raise ValueError(f'Data can only be a tensor or array, not {type(data)}')
 
-    B, C = targ.shape[:2]
-    if isinstance(pred, np.ndarray):
-        HD = np.zeros((B, C)).astype(np.float32)
-    else:
-        HD = torch.zeros((B, C), dtype=torch.float32)
-    
-    for b, c in np.ndindex(B, C):
-        (edges_pred, edges_gt) = get_mask_edges(pred[b, c], targ[b, c])
-        if not uni_any(edges_gt):
-            warnings.warn(f"the ground truth of class {c} is all 0, this may result in nan/inf distance.")
-        if not uni_any(edges_pred):
-            warnings.warn(f"the prediction of class {c} is all 0, this may result in nan/inf distance.")
+def allclose(data1, data2, rtol=1e-5, atol=1e-8, equal_nan=False):
+    assert type(data1) == type(data2), f'Types: {type(data1)}, {type(data2)}'
+    if isinstance(data1, torch.Tensor):
+        return torch.allclose(data1, data2, rtol=rtol, atol=atol, 
+                              equal_nan=equal_nan)
+    elif isinstance(data1, np.ndarray):
+        return np.allclose(data1, data2, rtol=rtol, atol=atol, 
+                           equal_nan=equal_nan)
+    raise ValueError(f'Data can only be a tensor or array, not {type(data1)}')
 
-        distance_1 = compute_percent_hausdorff_distance(edges_pred, edges_gt, distance_metric, percentile)
-        if directed:
-            HD[b, c] = distance_1
-        else:
-            distance_2 = compute_percent_hausdorff_distance(edges_gt, edges_pred, distance_metric, percentile)
-            HD[b, c] = max(distance_1, distance_2)
-    return torch.from_numpy(hd)
+def uni_any(data):
+    if isinstance(data[0], torch.Tensor):
+        return torch.any(data)
+    elif isinstance(data[0], np.ndarray):
+        return np.any(data)
+    raise ValueError(f'Data can only be a tensor or array, not {type(data)}')
+
+def nan_to_num(data, nan=0):
+    if isinstance(data, torch.Tensor):
+        return torch.nan_to_num(data, nan=nan)
+    elif isinstance(data, np.ndarray):
+        return np.nan_to_num(data, nan=nan)
+    raise ValueError(f'Data can only be a tensor or array, not {type(data)}')
 
 
 

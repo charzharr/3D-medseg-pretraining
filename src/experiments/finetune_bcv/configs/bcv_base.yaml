@@ -4,19 +4,19 @@ experiment:
   description: |
     > Reimplementation of PGL for 3D segmentation pretraining.
     >   Data: ~1400 volumes from KiTS & MSD Hepatic  Vessel, Pancreas, Lung Tumor, Liver, Spleen.
-  id: "(0830)bcv-scratch_dice+ce_s2"     # for wandb run identification
+  id: "(0831)bcv-scratch_adam_dice-nb_s3"     # for wandb run identification
   name: 'finetune_bcv'   # for experiment module identification
   project: '3DSeg-Pretrain'
 
   debug:                                            # (Correct Alignment)
     mode: False                                     # < Check
     overfitbatch: False                             # < Check
-    wandb: True                                     # < Check
-    save: True                                      # < Check
+    wandb: False                                     # < Check
+    save: False                                      # < Check
     break_train_iter: False                         # < Check
     break_test_iter: False                          # < Check
     test_every_n_epochs: 1
-  seed: 420
+  seed: 26
   hpsamp: ""
 
 
@@ -25,15 +25,17 @@ data:  # describing project-wide data specifications
   kits18: ''
   msd: ''
   bcv:
-    split: '60-20-20_2.csv'
+    split: '60-20-20_3.csv'
 
 
 # ---- ##  Training: iterations, criterion, optimization, etc.  ## ---- #
 train:
   start_epoch: 0
-  epochs: 400
-  batch_size: 4
-  examples_per_volume: 4
+  epochs: 500
+  batch_size: 2
+  examples_per_volume: 6
+
+  patch_size: [48, 160, 160]
 
   criterion:
     name: 'dice-ce'
@@ -41,20 +43,25 @@ train:
       alpha: 0.5
 
   optimizer:
-    name: 'adam'  # sgd, nesterov, adam
-    lr: .001
+    name: 'sgd'  # sgd, nesterov, adam
+    lr: .005
     wt_decay: 0.0001
     adam:
       betas: [0.9, 0.999]
+    sgd:
+      momentum: 0.9
 
   scheduler:
-    name: 'step'
+    name: 'exponential'
     rampup_rates: []
     min_lr: 0.000001
     
     step:
       factor: 0.1
       steps: [0.4, 0.6, 0.8]
+    
+    exponential:
+      exp_factor: 0.92
 
 
 # Model / Criterion / Other nn.Module Specifications

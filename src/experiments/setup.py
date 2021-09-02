@@ -25,10 +25,16 @@ def get_criterion(cfg):
         from lib.assess.losses3d import BYOL3d
         criterion = BYOL3d()
     elif crit_name == 'dice-ce':
-        from lib.assess.losses3d import DiceCrossEntropyLoss3d
-        criterion = DiceCrossEntropyLoss3d(
-            alpha=crit_cfg.alpha
-        )
+        from lib.assess.nnunet_loss import (DC_and_CE_loss, SoftDiceLoss,
+                                            softmax_helper)
+        # criterion = DC_and_CE_loss({'do_bg': False, 'batch_dice': False}, {},
+        #                             ignore_label=None)
+        criterion = SoftDiceLoss(apply_nonlin=softmax_helper, batch_dice=False, 
+                                 do_bg=False)
+        # from lib.assess.losses3d import DiceCrossEntropyLoss3d
+        # criterion = DiceCrossEntropyLoss3d(
+        #     alpha=crit_cfg.alpha
+        # )
     
     # ------ #  2D Segmentation Losses  # ------ #
     

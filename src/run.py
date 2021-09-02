@@ -10,6 +10,7 @@ Main job: call appropriate experiment main.py file and pass on env args.
 import sys, os
 import math, random
 import numpy as np
+np.set_printoptions(precision=3)
 
 import wandb
 import click

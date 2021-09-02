@@ -9,8 +9,11 @@ import sys, os
 import math, random
 import pathlib
 import pprint
+import warnings
+import inspect
 import numpy as np
 import pandas as pd
+from collections import namedtuple
 
 import torch, torchvision
 import torch.nn as nn
@@ -24,6 +27,8 @@ from lib.utils.train import ramps
 from lib.utils.io import output
 from lib.assess.seg_metrics import batch_cdj_metrics
 
+np.set_printoptions(formatter={'float': lambda x: "{0:0.3f}".format(x)},
+                    suppress=True)
 
 WATCH = timers.StopWatch()
 
@@ -73,23 +78,34 @@ def run(cfg, checkpoint=None):
             'config': cfg,
             'notes': cfg['experiment']['description']
         }
-    tracker = statistics.WandBTracker(wandb_settings=wandb_settings)   
+    tracker = statistics.WandBTracker(wandb_settings=wandb_settings)
+    source_code = {
+        'run': inspect.getsource(inspect.getmodule(inspect.currentframe())),
+        'data': inspect.getsource(inspect.getmodule(data_setup)),
+        'setup': inspect.getsource(inspect.getmodule(setup)),
+        'metrics': inspect.getsource(inspect.getmodule(lib.assess.seg_metrics))
+    } 
 
     # Training Components: model, criterion, optimizer, scheduler
     output.header_three('Model Setup')
-    from experiments.pgl.pgl_unet3d import UNet3D
-    model = UNet3D(n_input=1, n_class=1, act='relu')
+    from .ftbcv_unet3d import UNet3D as genesis_unet3d
+    from lib.nets.volumetric.resunet3d import UNet3D
+    
+    # model = genesis_unet3d(n_input=1, n_class=14, act='relu')
+    model = UNet3D(1, 14, final_sigmoid=False, is_segmentation=False)
     model = model.to(device)
     if len(gpu_indices) > 1:
         print(f'  * {len(gpu_indices)} GPUs, using nn.DataParallel.')
         model = nn.DataParallel(model)
     
     output.header_three('Criterion + Optimizer + Scheduler Setup')
+    from lib.assess.nnunet_loss import (DC_and_CE_loss, SoftDiceLoss,
+                                        softmax_helper)
+    criterion = SoftDiceLoss(apply_nonlin=softmax_helper, do_bg=False)
+    criterion = DC_and_CE_loss({}, {}, ignore_label=None)
     
-    criterion = setup.get_criterion(cfg)
     optimizer = setup.get_optimizer(cfg, model.parameters())
     scheduler = setup.get_scheduler(cfg, optimizer)
-    
 
     # Data Pipeline
     output.header_three('Data Setup')
@@ -129,32 +145,36 @@ def run(cfg, checkpoint=None):
             records = batch['records']
             
             X = batch['images'].float().to(device, non_blocking=True)
-            Y = batch['masks_1h'].long().to(device, non_blocking=True)
+            Y_id = batch['masks'].long().to(device, non_blocking=True)
+
+            out_d = model(X)
+            out = out_d['out']
+            loss_d = criterion(out, Y_id)
+            loss = loss_d['loss']
             
-            out = model(X)
             optimizer.zero_grad()
-            loss = criterion(out, Y)
-            
             loss.backward()
             optimizer.step()
 
             # Iteration & Epoch Training Metrics
-            preds = out.detach().cpu().softmax(-1)
-            targs = Y.detach().cpu()
+            targs = Y = batch['masks_1h']
+            pred_ids = out.detach().cpu().argmax(1).unsqueeze(1)
+            preds = torch.zeros(Y.shape)
+            preds.scatter_(1, pred_ids, 1)
 
-            iter_metrics_d = batch_metrics(preds, targs)
+            iter_metrics_d = batch_metrics(preds, targs, 
+                                           ignore_background=False)
             iter_metrics_d['loss'] = loss.item()
 
             iter_time = WATCH.toc('iter', disp=False)
-            missing_clsids = sorted(set(range(train_set.num_classes)) - 
-                                    set([n.item() for n in Y.unique()]))
-            ast = '*' if missing_clsids else ''
+            loss_str = criterion.get_loss_string(loss_d)
             print(
                 f"\n    Iter {it+1}/{len(train_loader)} ({iter_time:.1f} sec, "
                 f"{mem():.1f} GB) - "
-                f"loss {loss.item():.3f} (missing classes: {missing_clsids})\n"
-                f"\t\t dice{ast} {float(iter_metrics_d['dice_mean']):.3f}, "
-                f"jaccard {float(iter_metrics_d['jaccard_mean']):.3f}"
+                f"{loss_str} \n"
+                f"\t jaccard {iter_metrics_d['jaccard_mean']:.3f}\n"
+                f"\t dice {iter_metrics_d['dice_mean']:.3f}\n"
+                f"\t  {iter_metrics_d['dice_class']}\n"
             )
 
             update_mets = ['loss', 'dice_mean', 'jaccard_mean']
@@ -164,82 +184,86 @@ def run(cfg, checkpoint=None):
             WATCH.tic('iter')
             if debug['break_train_iter'] and it >= 2: 
                 break
-        
-        print(f'Epoch is done!')
-        import sys; sys.exit(1)
+
+        # -- Epoch Values -- #
+        epoch_mets = statistics.EpochMetrics()
+
         # Training epoch values
-        epoch_metrics_d = {}
-        train_mets = epmeter.avg(no_avg=['TPs', 'FPs', 'FNs', 'TNs'])
-        for k, v in train_mets.items():
-            if k in ['loss', 'AUC', 'ACC', 'SEN', 'SPE', 'F1']:
-                epoch_metrics_d['train_ep_' + k.lower()] = v
-            if k == 'TPs':
-                fps = train_mets['FPs']
-                fns = train_mets['FNs']
-                f1 = ((2 * v) / (2 * v + fps + fns)).mean()
-                epoch_metrics_d['train_ep_of1'] = f1
+        train_mets = epmeter.avg()
+        tracked_epmets = ['loss', 'dice_mean', 'jaccard_mean']
+        epoch_mets.update(train_mets, tracked_epmets, 'train_ep_')
 
         # Test + Epoch Metrics
-        if epoch % debug.test_every_n_epochs == debug.test_every_n_epochs - 1:
+        if False:# epoch % debug.test_every_n_epochs == debug.test_every_n_epochs - 1:
             output.subsubsection('Validation Metrics')
             val_mets = test_metrics(model, val_set, epoch, name='val')
-            for k, v in val_mets.items():
-                if k in ['dice', 'jaccard', 'hausdorff']:
-                    epoch_metrics_d['val_ep_' + k.lower()] = v
+            update_epoch_mets(val_mets, tracked_epmets, 'val_ep_')
             
             output.subsubsection('Testing Metrics')
             test_mets = test_metrics(model, test_set, epoch, name='test')
-            for k, v in test_mets.items():
-                if k in ['dice', 'jaccard', 'hausdorff']:
-                    epoch_metrics_d['test_ep_' + k.lower()] = v
-                    
-        print("\nEpoch Stats\n-----------")
-        for k, v in epoch_metrics_d.items():
-            if isinstance(v, float):
-                print(f"  {k: <21} {v:.4f}")
-            else:
-                print(f"  {k: <21} {v:d}")
+            update_epoch_mets(test_mets, tracked_epmets, 'test_ep_')
+        epoch_mets.print(pre="\nEpoch Stats\n-----------\n")
 
         force_sum = True if epoch == cfg.train.epochs - 1 else False
-        tracker.update(epoch_metrics_d, log=True, summarize=SUMMARIZE,
+        tracker.update(epoch_mets, log=True, summarize=SUMMARIZE,
             after_epoch=int(SAVE_AFTER * tot_epochs), force_summarize=force_sum)
         if debug['save'] and epoch >= SAVE_AFTER * tot_epochs:
-            save_model(cfg, model.state_dict(), lab_criterion, optimizer, 
-                       tracker, epoch)
+            save_model(cfg, model.state_dict(), tracker, epoch, source_code)
         scheduler.step(epoch=epoch, value=0)
         WATCH.toc(name='epoch')
         # End of epoch #
-    
-    # save csv for distribution analysis
-    if debug.save:
-        filename = f"{cfg['experiment']['id']}_{cfg['experiment']['name']}_last.csv"
-        curr_path = pathlib.Path(__file__).parent.absolute()
-        save_path = os.path.join(curr_path, filename)
-        df.to_csv(save_path)
 
 
-def batch_metrics(preds, targs):
+def batch_metrics(preds, targs, ignore_background=False, naive_avg=False):
     """
     preds: BxCxDxHxW, targs: BxCxDxHxW
     Accum: https://github.com/Project-MONAI/MONAI/blob/67aa4cfba3a7e32786f22c5767bf6772c2a393d9/monai/metrics/utils.py#L108
     """
-    cdj_tuple = batch_cdj_metrics(preds, targs, ignore_background=True)
-    
-    ec_dice = cdj_tuple.dice
-    ec_jaccard = cdj_tuple.jaccard
-    
+    cdj_tuple = batch_cdj_metrics(preds, targs,
+                                  ignore_background=ignore_background)
+
+    CM = namedtuple('ConfusionMatrix', ('tp', 'fp', 'fn', 'tn'))
+    nt_conf = cdj_tuple.confusion  # named_tuple: tp, fp, tn, fn
+    nt_conf = CM(np.array(nt_conf.tp), np.array(nt_conf.fp), 
+                 np.array(nt_conf.fn), np.array(nt_conf.tn))
+
+    ec_dice = np.array(cdj_tuple.dice)  # ec = element class
+    ec_jaccard = np.array(cdj_tuple.jaccard)
+    ec_exists = np.array(cdj_tuple.exists)
+
+    with np.errstate(divide='ignore', invalid='ignore'):
+        if naive_avg:
+            dice_class = ec_dice.mean(0)  # shape=(C,)
+            dice_batch = ec_dice.mean(1)
+            dice_mean = dice_batch.mean()
+            jaccard_class = ec_jaccard.mean(0)
+            jaccard_batch = ec_jaccard.mean(1)
+            jaccard_mean = jaccard_batch.mean()
+        else:
+            dice_class = ec_dice.sum(0) / ec_exists.sum(0)
+            dice_batch = ec_dice.sum(1) / ec_exists.sum(1)
+            jaccard_class = ec_jaccard.sum(0) / ec_exists.sum(0)
+            jaccard_batch = ec_jaccard.sum(1) / ec_exists.sum(1)
+            
+            for a in (dice_class, dice_batch, jaccard_class, jaccard_batch):
+                a[a == np.inf] = np.nan
+            batch_exist_count = np.sum(~np.isnan(dice_batch))
+            dice_mean = dice_batch.sum() / batch_exist_count
+            dice_mean = np.nan if dice_mean == np.inf else dice_mean
+            jaccard_mean = jaccard_batch.sum() / batch_exist_count
+            jaccard_mean = np.nan if jaccard_mean == np.inf else jaccard_mean
+
     return {
+        'confusion_all': nt_conf,  # named tuple
         'dice_all': ec_dice,
-        'dice_class': ec_dice.mean(0),  # shape=(C,)
-        'dice_batch': ec_dice.mean(1),  # shape=(B,)
-        'dice_mean': ec_dice.mean(1).mean(),
+        'dice_class': dice_class,  # shape=(C,)
+        'dice_batch': dice_batch,  # shape=(B,)
+        'dice_mean': dice_mean,
         'jaccard_all': ec_jaccard,
-        'jaccard_class': ec_jaccard.mean(0),  # shape=(C,)
-        'jaccard_batch': ec_jaccard.mean(1),  # shape=(B,)
-        'jaccard_mean': ec_jaccard.mean(1).mean(),
+        'jaccard_class': jaccard_class,  # shape=(C,)
+        'jaccard_batch': jaccard_batch,  # shape=(B,)
+        'jaccard_mean': jaccard_mean,
     }
-    
-    
 
 
 def test_metrics(model, dataset, epoch, name='test'):
@@ -287,17 +311,9 @@ def test_metrics(model, dataset, epoch, name='test'):
     return metrics_d
 
 
-def save_model(cfg, state, crit, opt, tracker, epoch):
-    # check
+def save_model(cfg, state_dict, tracker, epoch, code_d):
     end = 'last'
-    for met, max_gud in SAVE_BEST_METRICS.items():
-        if tracker.is_best(met, max_better=max_gud):
-            end = f"best-{met.split('_')[0]}-{met.split('_')[-1]}"
-            print(f"(emain/save_model) {end}: {tracker.best(met, max_better=max_gud):.2f}")
-            break
-    if end == 'last' and not SAVE_LAST:
-        return
-    
+
     curr_path = pathlib.Path(__file__).parent.absolute()
     fn_start = f"{cfg['experiment']['id']}_{cfg['experiment']['name']}_"
     rm_files = [f for f in os.listdir(curr_path) if f[-3:] == 'pth' \
@@ -308,20 +324,31 @@ def save_model(cfg, state, crit, opt, tracker, epoch):
         print(f"Deleting file -x {rm_files[0]}")
         os.remove(rm_file)
     
-    filename = fn_start + f"ep{epoch}_" + end
+    filename = fn_start + f"ep{epoch}_" + end + '.pth'
     print(f"Saving model -> {filename}")
     
-    save_path = os.path.join(curr_path, filename + '.pth')
+    save_path = os.path.join(curr_path, filename)
     torch.save({
-        'state_dict': state,
-        'criterion': crit,
-        'optimizer': opt,
+        'state_dict': state_dict,
+        'code_dict': code_d,
         'tracker': tracker,
-        'config': cfg
+        'config': cfg,
+        'epoch': epoch,
         },
         save_path
     )
+    return
 
+    # TODO metrics check
+    end = 'last'
+    for met, max_gud in SAVE_BEST_METRICS.items():
+        if tracker.is_best(met, max_better=max_gud):
+            end = f"best-{met.split('_')[0]}-{met.split('_')[-1]}"
+            print(f"(emain/save_model) {end}: {tracker.best(met, max_better=max_gud):.2f}")
+            break
+    if end == 'last' and not SAVE_LAST:
+        return
+    
 
 def mem():
     """ Get primary GPU card memory usage. """

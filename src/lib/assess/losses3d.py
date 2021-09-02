@@ -68,6 +68,10 @@ class DiceCrossEntropyLoss3d:
     def __init__(self, weights=None, alpha=0.5):
         self.weights = weights
         self.alpha = alpha
+
+        name = type(self).__name__
+        print(f'💠 {name} initiated with weights={self.weights}, \n'
+              f'   alpha={self.alpha}.')
     
     def __call__(self, pred, targ):
         """
