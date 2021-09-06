@@ -8,27 +8,51 @@ import numpy as np
 
 
 
-def get_config(filename):
-    r""" Merges specified config (or none) with default cfg file. """
+def get_config(filename, merge_default=True, search_dir=''):
+    r""" Merges specified config (or none) with default cfg file. 
     
+    Input scenarios:
+        - "filename" is a direct or relative path directly to the config file
+        - "filename" is searched for in "search_dir".
+    Note:
+        If merge_default is True and search_dir is not empty, then a an attempt
+        to fine a default config is made (file name has "default" in it), if
+        multiple are found, then the alphabetical first is used. 
+    """
     print(f" > Loading config ({filename})..", end='')
     
+    # 1. Load config into "experiment_cfg"
     if not filename:
         warnings.warn(f"(configs.py) WARNING: empty filename given.")
         experiment_cfg = {}
     else:
         if os.path.isfile(filename):
             cfg_file = filename
-        else: 
-            dir_path = pathlib.Path(__file__).parent.absolute()
-            cfg_file = os.path.join(dir_path, filename)
-            assert os.path.isfile(cfg_file), \
-                f"{filename} not in configs ({dir_path})"
+        else:  # look for config in search_dir
+            if not search_dir:
+                msg = ('If you give just a name for config file, then you must '
+                       'specify the directory to search in')
+                raise ValueError(msg)
+            cfg_file = os.path.join(search_dir, filename)
+            assert os.path.isfile(cfg_file), f'{filename} not in ({search_dir})'
         with open(cfg_file, 'r') as f:
             experiment_cfg = yaml.safe_load(f)
-    experiment_cfg = create_namespace(experiment_cfg)
     
-    # Hyperparamter sampling
+    # 2. Merge with default_dict if it exists
+    if merge_default:
+        if not search_dir:
+            msg = ('If you have "merge_default" set, then you must '
+                    'specify "search_dir"')
+            raise ValueError(msg)
+        default_cfg = [f for f in os.listdir(search_dir) if 'default' in f]
+        if not default_cfg:
+            warnings.warn(f'No default config found in {search_dir}.')
+        if len(default_cfg) > 1:
+            warnings.warn(f'Multiple default configs found: {default_cfg}.')
+        default_cfg = yaml.safe_load(os.path.join(search_dir, default_cfg[0]))
+        experiment_cfg = merge(default_cfg, experiment_cfg)
+    
+    # 3. Apply hyperparamter sampling if cfg.experiment.hpsamp is set
     hpsamp = None
     if 'hpsamp' in experiment_cfg.experiment:
         hpsamp = experiment_cfg.experiment.hpsamp
@@ -37,6 +61,9 @@ def get_config(filename):
             hpsamp_cfg = yaml.safe_load(f)
         experiment_cfg = get_sampled_config(hpsamp_cfg, experiment_cfg)
     print(f" done.")
+    
+    # Create namespace (dot notation accessible) and return
+    experiment_cfg = create_namespace(experiment_cfg)
     return experiment_cfg
 
 
@@ -124,10 +151,10 @@ def sample(instr):
     return instr        
 
 
-def _merge(default_d, experiment_d):
+def merge(default_d, experiment_d):
     merged_cfg = dict(default_d)
     for k, v in experiment_d.items():
         if isinstance(v, dict) and k in default_d:
-            v = _merge(default_d[k], v)
+            v = merge(default_d[k], v)
         merged_cfg[k] = v
     return merged_cfg

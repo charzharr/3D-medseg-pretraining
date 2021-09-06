@@ -36,7 +36,7 @@ import SimpleITK as sitk
 
 import experiments, lib
 from experiments import setup
-from experiments.finetune_bcv import data_setup
+from experiments.ftbcv import data_setup
 from lib.utils import devices, timers, statistics
 from lib.utils.train import ramps
 from lib.utils.io import output

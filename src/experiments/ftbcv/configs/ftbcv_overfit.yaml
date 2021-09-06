@@ -1,0 +1,94 @@
+
+# ---- ##  Experiment Setup, Logging Specifications, Environment  ## ---- #
+experiment:
+  description: 'Sanity check: test 0 loss and 100% dice on 2 batches'
+  id: "(0905bcv)OFIT2gpu_pglscale_genunet_adam_cew+bdice_s1"     # for wandb run identification
+  name: 'ftbcv'   # for experiment module identification
+  project: '3DSeg-Pretrain'
+
+  debug:                                            # (Correct Alignment)
+    mode: False                                     # < Check
+    overfitbatch: True                              # < Check
+    wandb: True                                     # < Check
+    save: True                                      # < Check
+    break_train_iter: False                         # < Check
+    break_test_iter: False                          # < Check
+    test_every_n_epochs: 1
+  seed: 26
+  hpsamp: ""
+
+  checkpoint:
+    file: '' #  '(0901)bcv-overfit_genunet_adam_cew+dice-batch_s3_ftbcv_ep499_last.pth'
+
+
+# ---- ##  Data Preprocessing, Loading, Transformation  ## ---- #
+
+data:  # describing project-wide data specifications
+  name: 'bcv'
+  kits18: ''
+  msd: ''
+  bcv:
+    num_classes: 14
+    split: '60-20-20_1.csv'
+
+
+# Model / Criterion / Other nn.Module Specifications
+model:
+  name: 'genesis_unet3d'  # gn_unet3d
+  init: 'kaiming'
+  sync_bn: False
+
+
+
+# ---- ##  Training: iterations, criterion, optimization, etc.  ## ---- #
+
+train:
+  start_epoch: 0
+  epochs: 100
+  batch_size: 2
+  examples_per_volume: 80
+  num_workers: 2
+
+  patch_size: [48, 160, 160]
+  fg_bias: 0.666
+  scale_range: [[1.1, 1.4], [1.1, 1.4], [1.1, 1.4]]
+
+  criterion:
+    name: 'dice_ce_nnunet'
+    dice_ce_nnunet:
+      dc_kw:
+        do_bg: True
+        batch_dice: True
+        smooth: 0.00001
+      ce_kw:
+        weights_key: 'bcv' # 'bcv_cbrt'
+    soft_dice_nnunet:
+      do_bg: null
+
+  optimizer:
+    name: 'adam'  # sgd, nesterov, adam
+    lr: .005
+    wt_decay: 0.0
+    adam:
+      betas: [0.9, 0.999]
+    sgd:
+      momentum: 0.9
+
+  scheduler:
+    name: 'step'
+    rampup_rates: []
+    min_lr: 0.000001
+    
+    step:
+      factor: 0.1
+      steps: [0.5, 0.8]
+    
+    exponential:
+      exp_factor: 0.95
+
+test:
+  batch_size: 3
+
+
+
+

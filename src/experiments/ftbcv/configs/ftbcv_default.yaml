@@ -2,36 +2,31 @@
 # ---- ##  Experiment Setup, Logging Specifications, Environment  ## ---- #
 experiment:
   description: |
-    > Reimplementation of BCV for 3D segmentation finetuning.
+    > (Default Description) BCV finetuning.
     >   Data: 30 volumes of 13 abdominal structures.
-    >    9/4 Best Settings: Gen-UNet, PGLscales (1.1, 1.4), wCE ('bcv'), bbgdc
-  id: "(0905bcv-2g)OFIT_mednet_adam_cew+bdice_s1"     # for wandb run identification
-    # 1. SWTICH WANDB & SAVE TO ON
-
-  name: 'finetune_bcv'   # for experiment module identification
+  id: "(monthday)experiment_data_optim_run"    # for easy wandb run IDing
+  name: 'ftbcv'   # for experiment module identification
   project: '3DSeg-Pretrain'
 
   debug:                                            # (Correct Alignment)
     mode: False                                     # < Check
-    overfitbatch: True                             # < Check
+    overfitbatch: False                             # < Check
     wandb: True                                     # < Check
-    save: False                                      # < Check
+    save: True                                      # < Check
     break_train_iter: False                         # < Check
     break_test_iter: False                          # < Check
     test_every_n_epochs: 1
-  seed: 26
+  seed: 420
   hpsamp: ""
 
   checkpoint:
-    file: '' #  '(0901)bcv-overfit_genunet_adam_cew+dice-batch_s3_finetune_bcv_ep499_last.pth'
+    file: ''
 
 
 # ---- ##  Data Preprocessing, Loading, Transformation  ## ---- #
 
 data:  # describing project-wide data specifications
   name: 'bcv'
-  kits18: ''
-  msd: ''
   bcv:
     num_classes: 14
     split: '60-20-20_1.csv'
@@ -41,8 +36,7 @@ data:  # describing project-wide data specifications
 model:
   name: 'resmednet3d'  # 'genesis_unet3d'  # gn_unet3d
   init: 'kaiming'
-  sync_bn: True
-
+  sync_bn: False
 
 
 # ---- ##  Training: iterations, criterion, optimization, etc.  ## ---- #
@@ -56,7 +50,7 @@ train:
 
   patch_size: [48, 160, 160]
   fg_bias: 0.666
-  scale_range: [[1.1, 1.4], [1.1, 1.4], [1.1, 1.4]]
+  scale_range: 1.
 
   criterion:
     name: 'dice_ce_nnunet'
@@ -66,7 +60,7 @@ train:
         batch_dice: True
         smooth: 0.00001
       ce_kw:
-        weights_key: 'bcv' # 'bcv_cbrt'
+        weights_key: 'bcv'
     soft_dice_nnunet:
       do_bg: null
 

@@ -1,31 +1,27 @@
 #!/bin/bash
 
-#$ -N save_debug
-#$ -o "/afs/crc.nd.edu/user/y/yzhang46/_3DPRE/src/experiments/finetune_bcv/artifacts/out.log"
-
 #$ -M yzhang46@nd.edu
 #$ -m abe                # Send mail when job begins, ends and aborts
 
 #$ -pe smp 4             
 #$ -q long          
 
+#$ -t 1-2:1
+#$ -N pretraining
 #$ -q gpu@@csecri-p100   # gpu@@csecri-p100, gpu@@csecri-titanxp 
-#$ -l gpu_card=1     
-
+#$ -l gpu_card=1
 
 export PROJ_PATH="/afs/crc.nd.edu/user/y/yzhang46/_3DPRE"
-export RUN_CFG="./experiments/finetune_bcv/configs/bcv_base.yaml"
-export RUN_CHECKPOINT=""
+export RUN_CFG="ftbcv_overfit.yaml"
+
 
 if [ "$USER" == "yzhang46" ]; then
-
         # Env and Requirements Setup
         cd $PROJ_PATH
 
         module load pytorch
         module load python 
         
-
         # echo -e "\n>>> Installing Python requirements\n"
         # pip3 install --user -r requirements.txt
         # echo -e "\n>>> Done installing Python requirements\n"
@@ -37,21 +33,19 @@ if [ "$USER" == "yzhang46" ]; then
         cd "$PROJ_PATH/src"
 
 else
-
         echo -e "Job script outside CRC GPU-env not implemented."
-
 fi
-
 
 # CUDA_VISIBLE_DEVICES=0,1,2,3
 export CUDA_VISIBLE_DEVICES="${SGE_HGR_gpu_card// /,}"
 if [ -z ${SGE_HGR_gpu_card+x} ]; then 
         SGE_HGR_gpu_card=-1
 fi
+
 echo -e "Assigned GPU(s): ${SGE_HGR_gpu_card}\n"
 echo -e "Starting Experiment =)"
 echo -e "=-=-=-=-=-=-=-=-=-=-=-=-=\n"
 
-python3 -u run.py \
-        --config $RUN_CFG 
+# Run experiment(s)
+python3 -u multirun.py
 

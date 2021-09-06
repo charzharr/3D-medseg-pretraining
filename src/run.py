@@ -8,6 +8,7 @@ Main job: call appropriate experiment main.py file and pass on env args.
 """
 
 import sys, os
+import pathlib
 import signal
 import math, random
 import numpy as np
@@ -23,14 +24,14 @@ import copy
 
 import configs, experiments
 from experiments.pgl import run_experiment as run_pgl
-from experiments.finetune_bcv import run_experiment as run_finetune_bcv
+from experiments.ftbcv import run_experiment as run_ftbcv
 # from experiments.finetune import run_experiment as run_finetune
 
 
 USER_CHOICES = ("charzhar", "yzhang46")
 EXPERIMENTS = {
     'pgl': run_pgl,
-    'finetune_bcv': run_finetune_bcv,
+    'ftbcv': run_ftbcv,
 }
 
 
@@ -39,11 +40,24 @@ EXPERIMENTS = {
 @click.option('-ddp', '--distributed', is_flag=True, 
               help='Flag to indicate whether to use distributed training.')
 def run_cli(config, distributed):
+    # --- ## Get config + env setup. ## --- #
+    given_cfg_path = pathlib.Path(config)
+    curr_path = pathlib.Path(__file__).parent.absolute()
+    exp_cfg_path = None
+    for exp in EXPERIMENTS:
+        if exp in given_cfg_path.name:
+            exp_cfg_path = str(curr_path / 'experiments' / exp / 'configs')
+            break
+        
+    if not exp_cfg_path:
+        msg = (f'Given config file "{config}" does not contain any of the '
+               f'experiment names in them: {list(EXPERIMENTS.keys())}')
+        raise ValueError(msg)
+    
+    cfg = configs.get_config(config, merge_default=True, 
+                             search_dir=exp_cfg_path)
 
-    """ Get config + env setup. """
-    cfg = configs.get_config(config)
-
-    # GPU Device Parsing
+    # --- ## GPU or device parsing. ## --- #
     gpu_indices = []
     gpu_env = os.getenv('SGE_HGR_gpu_card')
     if gpu_env:

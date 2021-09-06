@@ -1,7 +1,7 @@
 #!/bin/bash
 
 #$ -N save_debug
-#$ -o "/afs/crc.nd.edu/user/y/yzhang46/_3DPRE/src/experiments/finetune_bcv/artifacts/out.log"
+#$ -o "/afs/crc.nd.edu/user/y/yzhang46/_3DPRE/src/experiments/ftbcv/artifacts/out.log"
 
 #$ -M yzhang46@nd.edu
 #$ -m abe                # Send mail when job begins, ends and aborts
@@ -14,7 +14,7 @@
 
 
 export PROJ_PATH="/afs/crc.nd.edu/user/y/yzhang46/_3DPRE"
-export RUN_CFG="./experiments/finetune_bcv/configs/bcv_base.yaml"
+export RUN_CFG="./experiments/ftbcv/configs/bcv_base.yaml"
 export RUN_CHECKPOINT=""
 
 
