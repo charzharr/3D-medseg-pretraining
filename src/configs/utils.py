@@ -49,13 +49,15 @@ def get_config(filename, merge_default=True, search_dir=''):
             warnings.warn(f'No default config found in {search_dir}.')
         if len(default_cfg) > 1:
             warnings.warn(f'Multiple default configs found: {default_cfg}.')
-        default_cfg = yaml.safe_load(os.path.join(search_dir, default_cfg[0]))
+        with open(os.path.join(search_dir, default_cfg[0]), 'r') as f:
+            default_cfg = yaml.safe_load(f)
         experiment_cfg = merge(default_cfg, experiment_cfg)
     
     # 3. Apply hyperparamter sampling if cfg.experiment.hpsamp is set
     hpsamp = None
-    if 'hpsamp' in experiment_cfg.experiment:
-        hpsamp = experiment_cfg.experiment.hpsamp
+    if 'experiment' in experiment_cfg:
+        if 'hpsamp' in experiment_cfg['experiment']:
+            hpsamp = experiment_cfg['experiment']['hpsamp']
     if hpsamp:
         with open(hpsamp, 'r') as f:
             hpsamp_cfg = yaml.safe_load(f)
@@ -152,9 +154,13 @@ def sample(instr):
 
 
 def merge(default_d, experiment_d):
-    merged_cfg = dict(default_d)
+    experiment_d = dict(experiment_d)
+    merged_d = dict(default_d)
     for k, v in experiment_d.items():
-        if isinstance(v, dict) and k in default_d:
-            v = merge(default_d[k], v)
-        merged_cfg[k] = v
-    return merged_cfg
+        if k not in merged_d:
+            merged_d[k] = v
+        else:
+            if isinstance(v, dict) and isinstance(merged_d[k], dict):
+                v = merge(merged_d[k], v)
+            merged_d[k] = v
+    return merged_d

@@ -14,6 +14,15 @@ from collections import OrderedDict
 from ..basemodel import BaseModel
 
 
+class ForwardHook:
+    def __init__(self, module):
+        self.activations = None
+        self.forward_hook = module.register_forward_hook(self.forward_hook_fn)
+        
+    def forward_hook_fn(self, module, input, output):
+        self.activations = output
+
+
 class _DenseLayer(nn.Sequential):
 
     def __init__(self, num_input_features, growth_rate, bn_size, drop_rate):
@@ -80,7 +89,8 @@ class DenseNet(BaseModel):
     Args:
         growth_rate (int) - how many filters to add each layer (k in paper)
         block_config (list of 4 ints) - how many layers in each pooling block
-        num_init_features (int) - the number of filters to learn in the first convolution layer
+        num_init_features (int) - the number of filters to learn in the first 
+            convolution layer
         bn_size (int) - multiplicative factor for number of bottle neck layers
           (i.e. bn_size * k features in the bottleneck layer)
         drop_rate (float) - dropout rate after each dense layer
@@ -117,6 +127,7 @@ class DenseNet(BaseModel):
         self.features = nn.Sequential(OrderedDict(self.features))
 
         # Each denseblock
+        self.hooks = []
         num_features = num_init_features
         for i, num_layers in enumerate(block_config):
             block = _DenseBlock(num_layers=num_layers,
@@ -125,6 +136,8 @@ class DenseNet(BaseModel):
                                 growth_rate=growth_rate,
                                 drop_rate=drop_rate)
             self.features.add_module('denseblock{}'.format(i + 1), block)
+            self.hooks.append(ForwardHook(block))
+            
             num_features = num_features + num_layers * growth_rate
             if i != len(block_config) - 1:
                 trans = _Transition(num_input_features=num_features,

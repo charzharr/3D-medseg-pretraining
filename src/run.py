@@ -36,7 +36,7 @@ EXPERIMENTS = {
 
 
 @click.command()
-@click.option('--config', required=True, type=click.Path(exists=True))
+@click.option('--config', required=True, type=click.Path(exists=False))
 @click.option('-ddp', '--distributed', is_flag=True, 
               help='Flag to indicate whether to use distributed training.')
 def run_cli(config, distributed):
@@ -80,13 +80,14 @@ def run_cli(config, distributed):
 
     parse_cfg(cfg)
 
-    """ Additional experiment setup. """
+    # --- ## Final setup stuff. ## --- #
     exp_args = []
     experiment_main = EXPERIMENTS[cfg['experiment']['name']]
 
-    if 'finetune' in cfg.experiment.name:
+    if cfg.experiment.name == 'ftbcv':
         exp_args.append(torch.multiprocessing.Queue())
-
+    
+    # *RUN*
     try:
         if cfg.experiment.distributed:
             print(f' > Using distributed. Spawning {len(gpu_indices)} processes.')
@@ -100,7 +101,8 @@ def run_cli(config, distributed):
     except KeyboardInterrupt:
         import psutil
 
-        print(f'Exiting! Killing the children.')
+        print('\n\n' + '*' * 80 + '\n[ Ctrl+C Detected ]\n')
+        print(f'Exiting! Kill the kids!')
         child_processes = psutil.Process().children(recursive=True)
         for child in child_processes:
             print(f'Killing child process (PID={child.pid})')

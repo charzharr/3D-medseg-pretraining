@@ -292,7 +292,14 @@ def get_model(cfg):
     percs = 1 / weights
     approx_logits = torch.log(percs)
 
-    if cfg.model.name == 'resmednet3d':  # already inited
+    if cfg.model.name == 'denseunet3d':
+        from lib.nets.volumetric.denseunet3d import get_model as get_dunet
+        model = get_dunet(201, num_classes=14, deconv=False)
+        with torch.no_grad():
+            final_biases = torch.nn.Parameter(approx_logits)
+            model.conv2.bias = final_biases
+        import IPython; IPython.embed(); 
+    elif cfg.model.name == 'resmednet3d':  # already inited
         from lib.nets.volumetric.resnet3d_mednet import generate_resnet3d
         model = generate_resnet3d(in_channels=1, classes=14, model_depth=34)
         with torch.no_grad():
