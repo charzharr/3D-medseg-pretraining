@@ -1,21 +1,16 @@
 
 # ---- ##  Experiment Setup, Logging Specifications, Environment  ## ---- #
 experiment:
-  description: |
-    > Reimplementation of BCV for 3D segmentation finetuning.
-    >   Data: 30 volumes of 13 abdominal structures.
-    >    9/4 Best Settings: Gen-UNet, PGLscales (1.1, 1.4), wCE ('bcv'), bbgdc
-  id: "(0905bcv-2g)OFIT_mednet_adam_cew+bdice_s1"     # for wandb run identification
-    # 1. SWTICH WANDB & SAVE TO ON
-
+  description: 'Sanity check: test 0 loss and 100% dice on 2 batches'
+  id: "(0905bcv)OFIT2gpu_pglscale_genunet_adam_cew+bdice_s1"     # for wandb run identification
   name: 'finetune_bcv'   # for experiment module identification
   project: '3DSeg-Pretrain'
 
   debug:                                            # (Correct Alignment)
     mode: False                                     # < Check
-    overfitbatch: True                             # < Check
+    overfitbatch: True                              # < Check
     wandb: True                                     # < Check
-    save: False                                      # < Check
+    save: True                                      # < Check
     break_train_iter: False                         # < Check
     break_test_iter: False                          # < Check
     test_every_n_epochs: 1
@@ -39,9 +34,9 @@ data:  # describing project-wide data specifications
 
 # Model / Criterion / Other nn.Module Specifications
 model:
-  name: 'resmednet3d'  # 'genesis_unet3d'  # gn_unet3d
+  name: 'genesis_unet3d'  # gn_unet3d
   init: 'kaiming'
-  sync_bn: True
+  sync_bn: False
 
 
 

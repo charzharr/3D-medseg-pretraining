@@ -36,7 +36,15 @@ import SimpleITK as sitk
 
 
 # Data Setup & Loading Constants
-NUM_WORKERS = 0
+weights_d = {
+    'bcv': torch.tensor([0.09024509, 0.60796585, 0.69857068, 0.70220383, 
+       1.30277806, 1.52977076, 0.30930432, 0.45375822, 0.83759115, 0.87116222,
+       1.15747258, 0.83470601, 2.41945138, 2.18501984]),
+    'bcv_cbrt': torch.tensor([ 1.01478046,  6.83640367,  7.85522932,  
+       7.89608309, 14.64936999, 17.20183864,  3.47803937,  5.10238259,  
+       9.41847506,  9.79597224, 13.01545106,  9.38603252, 27.20604501, 
+       24.56992877])
+}
 
 
 # ------ ##   Main API from run_experiment()  ## ------ #
@@ -44,10 +52,8 @@ NUM_WORKERS = 0
 
 def get_data_components(cfg):
     start = time.time()
-    logging.getLogger().setLevel(logging.CRITICAL)
 
     # 1. Collect the dfs & process them into 1
-    
     if not cfg.data.bcv.split:
         # Random 60-20-20 split
         df = get_bcv_df()
@@ -77,12 +83,26 @@ def get_data_components(cfg):
     val_df = df[df['subset'] == 'val']
     test_df = df[df['subset'] == 'test']
 
+    if cfg.experiment.distributed:
+        rank = cfg.experiment.rank
+        worldsize = cfg.experiment.worldsize
+
+        def get_indices_slice(rank, N, worldsize):
+            if rank == worldsize - 1:
+                return slice(rank * (N // worldsize), None, 1)
+            return slice(rank * (N // worldsize), (rank + 1) * (N // worldsize))
+
+        train_df = train_df[get_indices_slice(rank, len(train_df), worldsize)]
+        val_df = val_df[get_indices_slice(rank, len(val_df), worldsize)]
+        test_df = test_df[get_indices_slice(rank, len(test_df), worldsize)]
+
     # 2. Create master list of samples (threading?) & SampleSet
     start = time.time()
     sample_args = []
-    for i, S in df.iterrows():
+    for i, S in pd.concat([train_df, val_df, test_df]).iterrows():
         sample_args.append((i, S['id'], S['image'], S['mask'], S['imgsize'],
                             S['subset']))
+    print(f'Collecting data samples:')
     with multiprocessing.Pool() as pool:  # took 5 sec to load BCV
         samples = pool.map(_get_sample, sample_args)
     # samples = map(_get_sample, sample_args)
@@ -99,24 +119,30 @@ def get_data_components(cfg):
             assert sample.subset == 'test'
             test_samples.append(sample)
     
+    print(f'\nTrain Data Components:')
     train_set = BCVSampleSet(cfg, train_samples, is_train=True)
-    val_set = BCVSampleSet(cfg, val_samples)
-    test_set = BCVSampleSet(cfg, test_samples)
-    
-    print(f'[Took {time.time() - start:.2f} sec to load all data.]')
-    
     debug = cfg.experiment.debug
     shuffle = False if debug.overfitbatch or debug.mode else True
+    num_workers = 0 if debug.mode or debug.overfitbatch else cfg.train.num_workers
     train_loader = torch.utils.data.DataLoader(
         train_set,
         shuffle=shuffle,
         batch_size=cfg.train.batch_size,
         collate_fn=collate,
-        num_workers=NUM_WORKERS,
-        prefetch_factor=2 if NUM_WORKERS > 0 else 2
+        num_workers=num_workers,
+        prefetch_factor=2 if num_workers > 0 else 2
     )
-    print(f'Torch Dataloader initialized with {NUM_WORKERS} workers!')
+    print(f'💠 Torch Dataloader initialized with {num_workers} workers!\n'
+          f'   Batch-size={cfg.train.batch_size}, Shuffle={shuffle}. \n')
+
+    print(f'\nValidation Data Components:')
+    val_set = BCVSampleSet(cfg, val_samples)
+
+    print(f'\nTest Data Components:')
+    test_set = BCVSampleSet(cfg, test_samples)
     
+    print(f'[Took {time.time() - start:.2f} sec to load all data.]')
+
     return {
         'df': df,
         'train_df': train_df,
@@ -152,7 +178,7 @@ def _get_sample(args):
         'subset': subset,
     }
     sample = Sample(sample_dict)
-    print(f'[Took {time.time() - start:.2f}s for sample creation.]')
+    print(f'    Took {time.time() - start:.2f}s for sample creation.')
     return sample
 
 
@@ -214,20 +240,30 @@ class BCVSampleSet(SampleSet):
         super().__init__(samples)
         
         # Preprocessing transforms
+        self.transforms = []
         if self.is_train:
-            self.crop = myT.ScaledUniformCropper3d(cfg.train.patch_size, 
-                                                   scale_range=(0.8, 1.2))
-            self.transforms = [
-                myT.Flip3d(p=0.5),
-                myT.GaussianNoise(p=0.1, mean=0., var=(0, 0.1)),
-                myT.GaussianBlur(p=0.2, spacing=1,   # ignore space for now
-                                 sigma=(0.5, 1)),
-                myT.ScaleIntensity(p=0.5, scale=(0.75, 1.25)),
-                myT.Gamma(p=0.5, gamma=(0.7, 1.5))
-            ]
+            # self.crop = myT.ScaledUniformCropper3d(cfg.train.patch_size, 
+            #                                        scale_range=(0.8, 1.2))
+            if cfg.experiment.debug.overfitbatch:
+                cfg.train.scale_range = 1.
+            self.crop = myT.ScaledForegroundCropper3d(
+                cfg.train.patch_size,
+                scale_range=cfg.train.scale_range, 
+                foreground_p=cfg.train.fg_bias)
+            if not cfg.experiment.debug.overfitbatch:
+                self.transforms = [
+                    myT.Flip3d(p=0.5),
+                    myT.GaussianNoise(p=0.1, mean=0., var=(0, 0.1)),
+                    myT.GaussianBlur(p=0.2, spacing=1,   # ignore space for now
+                                     sigma=(0.5, 1)),
+                    myT.ScaleIntensity(p=0.5, scale=(0.75, 1.25)),
+                    myT.Gamma(p=0.5, gamma=(0.7, 1.5))
+                ]
+
         print(f'💠 BCVSampleSet created with {len(self.samples)} samples. \n'
               f'   Train={is_train}, Crops/Vol={self.crops_per_volume}, '
-              f'Virtual-Size={len(self)}')
+              f'Virtual-Size={len(self)}, #Transforms={len(self.transforms)}.\n'
+              f'   Indices: {[s.index for s in self.samples]}')
             
     def __len__(self):
         return len(self.samples) * self.crops_per_volume  # hackey
@@ -250,16 +286,24 @@ class BCVSampleSet(SampleSet):
         assert 'float32' in str(tensor.dtype)
         
         sitk_mask = sample.mask.sitk_image
-        mask_tens = torch.tensor(sitk.GetArrayFromImage(sitk_mask))
+        mask_tens = torch.from_numpy(sitk.GetArrayFromImage(sitk_mask))
         assert mask_tens.shape == tensor.shape
         
         record_dict = OrderedDict()
         
         if not self.is_train:
-            return {'tensor': tensor, 'mask': mask_tens, 'record': record_dict}
+            mask_1h = sample.mask.get_one_hot(crop=mask_tens, 
+                channel_first=True, tensor=True)    
+            return {
+                'sample': sample,
+                'tensor': tensor, 
+                'mask': mask_tens, 
+                'mask_1h': mask_1h,
+                'record': record_dict
+            }
         
         # 1. Crop
-        image_tup, mask_tup = self.crop(tensor, mask=mask_tens)
+        image_tup, mask_tup = self.crop(tensor, mask_tens)
         image_crop, image_record = image_tup
         mask_crop, image_record = mask_tup
         record_dict[self.crop.__class__.__name__] = image_record

@@ -37,6 +37,13 @@ def to_float(data):
         return data.astype(np.float32)
     raise ValueError(f'Data can only be a tensor or array, not {type(data)}')
 
+def to_int(data):
+    if isinstance(data, torch.Tensor):
+        return data.int()
+    elif isinstance(data, np.ndarray):
+        return data.astype(np.int32)
+    raise ValueError(f'Data can only be a tensor or array, not {type(data)}')
+
 def allclose(data1, data2, rtol=1e-5, atol=1e-8, equal_nan=False):
     assert type(data1) == type(data2), f'Types: {type(data1)}, {type(data2)}'
     if isinstance(data1, torch.Tensor):

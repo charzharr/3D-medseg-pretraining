@@ -109,6 +109,9 @@ class Resize3d(Transform):
     def resize(image, size, interpolation):
         assert isinstance(image, torch.Tensor), 'Only tensors supported.'
         
+        if size == image.shape[-3:]:
+            return image
+
         shape = image.shape
         if image.ndim == 4:
             msg = ('If you give Resize3D a 4 dim tensor, then dim 1 must be '

@@ -21,7 +21,7 @@ class ChopBatchAggregate3d:
     """
     
     def __init__(self, volume_tensor, patch_size, patch_overlap, batch_size,
-                 num_classes):
+                 num_classes, device='cpu'):
         """ Does the chopping where grid locations are calculated.
         Args:
             volume_tensor: DxHxC 3D image
@@ -32,7 +32,7 @@ class ChopBatchAggregate3d:
         assert volume_tensor.ndim == 3
         
         self.tensor = volume_tensor
-        self.device = self.tensor.device
+        self.device = device
         self.tensor_shape = volume_tensor.shape
         
         self.patch_size = patch_size
@@ -137,8 +137,8 @@ class ChopBatchAggregate3d:
         ret = ret.lower()
         
         with torch.no_grad():
-            dev = 'cuda'  # cuda takes too much memory
-            agg_pred = torch.div(self.accum_tensor.to(dev), self.average_mask.to(dev))
+            agg_pred = torch.div(self.accum_tensor.to(self.device), 
+                                 self.average_mask.to(self.device))
 
             if 'softmax' in act:
                 agg_pred = agg_pred.softmax(1)
@@ -149,7 +149,7 @@ class ChopBatchAggregate3d:
             if 'one' in ret or '1' in ret:  # one hot
                 oh_shape = agg_pred.shape
                 agg_pred = agg_pred.argmax(0).unsqueeze(0)
-                agg_pred = torch.empty(oh_shape, device=dev).scatter_(
+                agg_pred = torch.empty(oh_shape, device=self.device).scatter_(
                                 0, agg_pred, 1).to(torch.int32)
             elif 'id' in ret:
                 agg_pred = agg_pred.argmax(0).to(torch.int32)

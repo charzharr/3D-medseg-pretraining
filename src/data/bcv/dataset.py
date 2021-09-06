@@ -17,6 +17,9 @@ Overview
     (11) pancreas
     (12) right adrenal gland
     (13) left adrenal gland
+- Class imbalance is insane:
+    [1.045, 319.509, 484.704, 492.306, 3143.814, 5090.080, 42.073,
+...  132.837, 835.491, 940.032, 2204.843, 826.887, 20137.068, 14832.409]
 
 Resources
  - https://www.synapse.org/#!Synapse:syn3193805/wiki/217789

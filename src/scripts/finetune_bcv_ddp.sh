@@ -10,12 +10,13 @@
 #$ -q long          
 
 #$ -q gpu@@csecri-p100   # gpu@@csecri-p100, gpu@@csecri-titanxp 
-#$ -l gpu_card=1     
+#$ -l gpu_card=2
 
 
 export PROJ_PATH="/afs/crc.nd.edu/user/y/yzhang46/_3DPRE"
 export RUN_CFG="./experiments/finetune_bcv/configs/bcv_base.yaml"
 export RUN_CHECKPOINT=""
+
 
 if [ "$USER" == "yzhang46" ]; then
 
@@ -52,6 +53,10 @@ echo -e "Assigned GPU(s): ${SGE_HGR_gpu_card}\n"
 echo -e "Starting Experiment =)"
 echo -e "=-=-=-=-=-=-=-=-=-=-=-=-=\n"
 
+# pkill -f run.py
+# pkill -f python3
+
 python3 -u run.py \
-        --config $RUN_CFG 
+        --config $RUN_CFG \
+        --distributed 
 

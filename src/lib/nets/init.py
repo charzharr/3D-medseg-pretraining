@@ -2,6 +2,12 @@ import torch
 import torch.nn as nn
 from torch.nn import init
 
+conv_base_class = torch.nn.modules.conv._ConvNd
+linear_base_class = torch.nn.modules.linear.Linear
+bn_base_class = torch.nn.modules.batchnorm._BatchNorm
+
+
+
 
 def init_weights(net, init_type='normal'):
     #print('initialization method [%s]' % init_type)
@@ -14,17 +20,19 @@ def init_weights(net, init_type='normal'):
     elif init_type == 'orthogonal':
         net.apply(weights_init_orthogonal)
     else:
-        raise NotImplementedError('initialization method [%s] is not implemented' % init_type)
+        msg = f'initialization method {init_type} is not implemented'
+        raise NotImplementedError(msg)
 
 
 def weights_init_normal(m):
     classname = m.__class__.__name__
     #print(classname)
-    if classname.find('Conv') != -1:
+    if isinstance(m, conv_base_class):
         init.normal_(m.weight.data, 0.0, 0.02)
-    elif classname.find('Linear') != -1:
+        init.constant_(m.bias.data, 0.0)
+    elif isinstance(m, linear_base_class):
         init.normal_(m.weight.data, 0.0, 0.02)
-    elif classname.find('BatchNorm') != -1:
+    elif isinstance(m, bn_base_class):
         init.normal_(m.weight.data, 1.0, 0.02)
         init.constant_(m.bias.data, 0.0)
 
@@ -32,11 +40,12 @@ def weights_init_normal(m):
 def weights_init_xavier(m):
     classname = m.__class__.__name__
     #print(classname)
-    if classname.find('Conv') != -1:
+    if isinstance(m, conv_base_class):
         init.xavier_normal_(m.weight.data, gain=1)
-    elif classname.find('Linear') != -1:
+        init.constant_(m.bias.data, 0.0)
+    elif isinstance(m, linear_base_class):
         init.xavier_normal_(m.weight.data, gain=1)
-    elif classname.find('BatchNorm') != -1:
+    elif isinstance(m, bn_base_class):
         init.normal_(m.weight.data, 1.0, 0.02)
         init.constant_(m.bias.data, 0.0)
 
@@ -44,11 +53,12 @@ def weights_init_xavier(m):
 def weights_init_kaiming(m):
     classname = m.__class__.__name__
     #print(classname)
-    if classname.find('Conv') != -1:
+    if isinstance(m, conv_base_class):
         init.kaiming_normal_(m.weight.data, a=0, mode='fan_in')
-    elif classname.find('Linear') != -1:
+        init.constant_(m.bias.data, 0.0)
+    elif isinstance(m, linear_base_class):
         init.kaiming_normal_(m.weight.data, a=0, mode='fan_in')
-    elif classname.find('BatchNorm') != -1:
+    elif isinstance(m, bn_base_class):
         init.normal_(m.weight.data, 1.0, 0.02)
         init.constant_(m.bias.data, 0.0)
 
@@ -56,10 +66,11 @@ def weights_init_kaiming(m):
 def weights_init_orthogonal(m):
     classname = m.__class__.__name__
     #print(classname)
-    if classname.find('Conv') != -1:
+    if isinstance(m, conv_base_class):
         init.orthogonal_(m.weight.data, gain=1)
-    elif classname.find('Linear') != -1:
+        init.constant_(m.bias.data, 0.0)
+    elif isinstance(m, linear_base_class):
         init.orthogonal_(m.weight.data, gain=1)
-    elif classname.find('BatchNorm') != -1:
+    elif isinstance(m, bn_base_class):
         init.normal_(m.weight.data, 1.0, 0.02)
         init.constant_(m.bias.data, 0.0)

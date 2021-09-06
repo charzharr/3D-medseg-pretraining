@@ -75,8 +75,16 @@ def get_scheduler(cfg, optimizer):
             minlr=min_lr,
             rampup_rates=rampup_rates
         )
-    elif 'consistencycosine' in sched:
-        scheduler = schedulers.ConsistencyCosineDecay(
+    elif 'consistencycosine' in sched:  # orig_lr * cos(7*pi*t/(16*T)) 
+        scheduler = schedulers.ConsistencyCosineDecay( 
+            optimizer,
+            T, 
+            t=t,
+            minlr=min_lr,
+            rampup_rates=rampup_rates
+        )
+    elif 'cosine' in sched:   # 0.5(1 + cos(pi*t/T)) * orig_lr
+        scheduler = schedulers.CosineDecay(  
             optimizer,
             T, 
             t=t,

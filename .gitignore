@@ -25,6 +25,7 @@ __pycache__/
 # Images, Data Samples
 tests/
 samples/
+*.nii.gz
 
 # Misc - Project Specific
 archive/

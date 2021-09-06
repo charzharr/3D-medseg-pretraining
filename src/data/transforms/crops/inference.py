@@ -1,17 +1,11 @@
 
-
-from data.transforms.crops.utils import get_grid_locations_3d
-
-
+import time
 import torch
-
-from lib.utils.parse import parse_nonnegative_int
-from data.transforms.crops.utils import get_grid_locations_3d
+import numpy as np
 
 
 class ChopBatchAggregate3d:
     """
-    
     Example Usage:
     ```
         for volume, mask in test_set:
@@ -28,36 +22,44 @@ class ChopBatchAggregate3d:
     """
     
     def __init__(self, volume_tensor, patch_size, patch_overlap, batch_size,
-                 num_classes):
+                 num_classes, device='cpu'):
         """ Does the chopping where grid locations are calculated.
         Args:
-            volume_tensor: 
-            patch_size:
-            patch_overlap:
-            batch_size
+            volume_tensor: DxHxC 3D image
+            patch_size: (d, h, c) patch sizes
+            patch_overlap: (d, h, c) overlaps
+            batch_size: inference batch size
+            device: if 'cuda' then aggregate divide makes use of GPU.
+                This only applies to 1 operation in aggregate, nothing else!!
         """
+        assert volume_tensor.ndim == 3
+        
         self.tensor = volume_tensor
+        self.device = device
         self.tensor_shape = volume_tensor.shape
+        
         self.patch_size = patch_size
         self.patch_overlap = patch_overlap
-        self.batch_size = parse_nonnegative_int(batch_size, 'batch_size')
+        self.batch_size = batch_size
         
         # N x 6 array where each row is a crop: (d1,h1,x1,d2,h2,x2)
         self.grid_locations = get_grid_locations_3d(
             self.tensor_shape, self.patch_size, self.patch_overlap)
         self.num_patches = self.grid_locations.shape[0]
 
-        self.num_classes = parse_nonnegative_int(num_classes, 'num_classes')
+        self.num_classes = num_classes
         mask_shape = [num_classes] + list(self.tensor.shape)
-        self.accum_tensor = torch.zeros(mask_shape, dtype=torch.float32)
-        self.average_mask = torch.ones(mask_shape, dtype=torch.float32)
+        self.accum_tensor = torch.zeros(mask_shape, dtype=torch.float32,
+                                        device=self.device, requires_grad=False)
+        self.average_mask = torch.ones(mask_shape, dtype=torch.uint8,
+                                        device=self.device, requires_grad=False)
     
 
     def __len__(self):
         """ Returns the total number of batches. """
-        N_patches = self.grid_locations[0]
+        N_patches = self.num_patches
         additional_batch = int( (N_patches % self.batch_size) > 0 )
-        return N_patches // batch_size + additional_batch
+        return N_patches // self.batch_size + additional_batch
 
 
     def __iter__(self):
@@ -65,11 +67,17 @@ class ChopBatchAggregate3d:
         self.batch_counter = 0
         self.patch_counter = 0
         self.num_aggregated_batches = 0
-
+        return self
+        
         
     def __next__(self):
-        """ Gets a batch of crops. """
-        if self.batch_counter > len(self):
+        """ Gets a batch of crops. 
+        Returns:
+            tuple(batch_tensor, batch_locations)
+                batch_tensor: Bx1xDxHxW of crops
+                batch_locations = Bx6 array of upper & lower locations.
+        """
+        if self.batch_counter >= len(self):
             raise StopIteration
         idx_start = self.batch_size * self.batch_counter
         idx_exl_end = min(idx_start + self.batch_size, 
@@ -82,7 +90,6 @@ class ChopBatchAggregate3d:
                                 lower[1]: upper[1],
                                 lower[2]: upper[2]]  # no clone, no Δ to data
             batch_patches.append(patch)
-
         self.batch_counter += 1
         batch_tensor = torch.stack(batch_patches, dim=0).unsqueeze(1)
         batch_locations = self.grid_locations[idx_start:idx_exl_end]
@@ -99,27 +106,29 @@ class ChopBatchAggregate3d:
                 'sigmoid' means apply a sigmoid to entire tensor
         """
         N, C = batch.shape[:2]
-        assert batch.ndim == 4
+        assert batch.ndim == 5
         assert C == self.num_classes
         assert N == locations.shape[0]
         assert locations.shape[1] == 6
+        act = act.lower()
 
-        if 'softmax' in act:
-            batch = batch.softmax(1)
-        elif 'sigmoid' in act:
-            batch = batch.sigmoid()
+        with torch.no_grad():
+            batch = batch.to(self.device)
+            if 'softmax' in act:
+                batch = batch.softmax(1)
+            elif 'sigmoid' in act:
+                batch = batch.sigmoid()
 
-        dev = self.tensor.device
-        for n in range(N):
-            lower = locations[n, :3]
-            upper = locations[n, 3:]
+            for n in range(N):
+                lower = locations[n, :3]
+                upper = locations[n, 3:]
 
-            self.accum_tensor[:, lower[0]:upper[0],
-                                 lower[1]:upper[1],
-                                 lower[2]:upper[2]] += batch[n].to(dev)
-            self.average_mask[:, lower[0]:upper[0],
-                                 lower[1]:upper[1],
-                                 lower[2]:upper[2]] += 1
+                self.accum_tensor[:, lower[0]:upper[0],
+                                     lower[1]:upper[1],
+                                     lower[2]:upper[2]] += batch[n]
+                self.average_mask[:, lower[0]:upper[0],
+                                     lower[1]:upper[1],
+                                     lower[2]:upper[2]] += 1
     
 
     def aggregate(self, act='none', ret='none', cpu=True, numpy=True):
@@ -128,24 +137,78 @@ class ChopBatchAggregate3d:
             act: 'none', 'softmax', 'sigmoid'
             ret: 'none', 'one_hot'/'1_h'/'1_hot', 'id'/'id_map'
         """
-        agg_pred = torch.div(self.accum_tensor, self.average_mask)
+        start = time.time()
+        act = act.lower()
+        ret = ret.lower()
         
-        if 'softmax' in act:
-            agg_pred = agg_pred.softmax(1)
-        elif 'sigmoid' in act:
-            agg_pred = agg_pred.sigmoid()
+        with torch.no_grad():
+            agg_pred = torch.div(self.accum_tensor, self.average_mask)
+            if 'cpu' not in self.device:  # clear accum tensors to save mem
+                del self.accum_tensor
+                self.accum_tensor = None
+                del self.average_mask
+                self.average_mask = None
+                # with torch.cuda.device(self.device):
+                #     torch.cuda.empty_cache()
 
-        if 'one' in ret or '1' in ret:  # one hot
-            zeros = torch.zeros(agg_pred.shape)
-            agg_pred = agg_pred.argmax(0).unsqueeze(0)
-            agg_pred = zeros.scatter_(0, agg_pred, 1).to(torch.int32)
-        elif 'id' in ret:
-            agg_pred = agg_pred.argmax(0).to(torch.int32)
+            if 'softmax' in act:
+                agg_pred = agg_pred.softmax(1) 
+            elif 'sigmoid' in act:
+                agg_pred = agg_pred.sigmoid()
+            
+            # print('Aggregate (divide): ', time.time() - start)
+            if 'one' in ret or '1' in ret:  # one hot
+                oh_shape = agg_pred.shape
+                agg_pred = agg_pred.to(torch.float16)
+                agg_pred = agg_pred.argmax(0).unsqueeze(0)
+                if cpu:
+                    agg_pred = agg_pred.cpu()
+                    zeros = torch.zeros(oh_shape, dtype=torch.uint8)
+                else:
+                    zeros = torch.zeros(oh_shape, dtype=torch.uint8,
+                                        device=agg_pred.device)
+                agg_pred = torch.zeros(oh_shape, dtype=torch.uint8).scatter_(
+                                       0, agg_pred, 1)
+            elif 'id' in ret:
+                fin_type = torch.int16
+                if self.num_classes <= 255:
+                    fin_type = torch.uint8
+                elif self.num_classes > 32767:
+                    fin_type = torch.int32
+                if cpu:
+                    agg_pred = agg_pred.argmax(0).to(fin_type).cpu()
+                else:
+                    agg_pred = agg_pred.argmax(0).to(fin_type)
 
-        if cpu:
-            agg_pred = agg_pred.detach().cpu()
-        if numpy:
-            agg_pred = agg_pred.numpy()
+            if numpy:
+                agg_pred = agg_pred.detach().cpu().numpy()
+        # print('Aggregate: ', time.time() - start)
         return agg_pred
         
+
+
+def get_grid_locations_3d(image_size, patch_size, patch_overlap, sort=False):
+    """ 
+    Args:
+        image_size: sequence or array of same dimension as image
+        patch_size: patch lengths among all dims (same shape as image_size)
+        patch_overlap: (same shape as image_size)
+    """
+    indices = []
+    zipped = zip(image_size, patch_size, patch_overlap)
+    for im_size_dim, patch_size_dim, patch_overlap_dim in zipped:
+        end = im_size_dim + 1 - patch_size_dim
+        step = patch_size_dim - patch_overlap_dim
+        indices_dim = list(range(0, end, step))
+        if indices_dim[-1] != im_size_dim - patch_size_dim:
+            indices_dim.append(im_size_dim - patch_size_dim)
+        indices.append(indices_dim)
+    indices_ini = np.array(np.meshgrid(*indices)).reshape(3, -1).T
+    indices_ini = np.unique(indices_ini, axis=0)
+    indices_fin = indices_ini + np.array(patch_size)
+    locations = np.hstack((indices_ini, indices_fin))
+    
+    if sort:
+        return np.array(sorted(locations.tolist()))
+    return locations
     
