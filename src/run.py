@@ -118,8 +118,29 @@ def parse_cfg(cfg):
     if 'best' in cfg.experiment.name:
         raise ValueError(f'"best" cannot be in the experiment name!')
 
-    # Adjust multi-gpu parameters
+    # Adjust batch sizes based on models
     N_gpus = len(cfg.experiment.gpu_idxs)
+    if N_gpus > 0:
+        changed = False
+        if 'dense' in cfg.model.name:
+            tr_batch = cfg.train.batch_size
+            te_batch = cfg.test.batch_size
+            cfg.train.batch_size = 3
+            cfg.test.batch_size = 4
+            changed = True
+        elif 'unet' in cfg.model.name:
+            tr_batch = cfg.train.batch_size
+            te_batch = cfg.test.batch_size
+            cfg.train.batch_size = 2
+            cfg.test.batch_size = 3
+            changed = True
+
+        if changed:  # print changes
+            print(f' Adjusting batch sizes based on model used:')
+            print(f'  Train Batch: {tr_batch} -> {cfg.train.batch_size}')
+            print(f'  Test Batch: {te_batch} -> {cfg.test.batch_size}')
+
+    # Adjust multi-gpu parameters
     if not cfg.experiment.distributed and N_gpus > 1:
         print(f'* {N_gpus} GPUs detected! Adjusting batch size and LR:')
         

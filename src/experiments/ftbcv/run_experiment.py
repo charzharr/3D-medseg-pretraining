@@ -214,8 +214,8 @@ def run(rank, cfg, inference_metrics_queue):
 
             # Iteration & Epoch Training Metrics
             targs = Y = batch['masks_1h']
-            pred_ids = out.detach().cpu().argmax(1).unsqueeze(1)
-            preds = torch.zeros(Y.shape)
+            pred_ids = out.detach().argmax(1).unsqueeze(1).cpu()
+            preds = torch.zeros(Y.shape, dtype=torch.uint8)
             preds.scatter_(1, pred_ids, 1)
 
             iter_metrics_d = batch_metrics(preds, targs, 
@@ -298,7 +298,6 @@ def get_model(cfg):
         with torch.no_grad():
             final_biases = torch.nn.Parameter(approx_logits)
             model.conv2.bias = final_biases
-        import IPython; IPython.embed(); 
     elif cfg.model.name == 'resmednet3d':  # already inited
         from lib.nets.volumetric.resnet3d_mednet import generate_resnet3d
         model = generate_resnet3d(in_channels=1, classes=14, model_depth=34)
@@ -487,6 +486,8 @@ def test_metrics(cfg, model, dataset, epoch, test_metrics_queue,
     if cfg.experiment.rank == 0:
         update_mets = ['dice_mean', 'jaccard_mean']
         data_cfg = cfg.data[cfg.data.name]
+        if not cfg.experiment.distributed:
+            num_examples = len(processes)
         for i in range(num_examples):
             mets = test_metrics_queue.get()
             epmeter.update({k: mets[k] for k in update_mets})

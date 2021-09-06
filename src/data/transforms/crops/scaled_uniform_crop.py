@@ -80,6 +80,7 @@ class ScaledUniformCropper3d:
                 int(scale_range[i][1] * final_shape[i]), (1,)).item()
                 for i in range(0, 3)
             ]
+            crop_shape = [min(c, s) for c, s in zip(crop_shape, volume_shape)]
             crop_lower, crop_upper = sample_crop(volume_shape, crop_shape)
             resized_crop = crop_resize_3d(volume_tensor, crop_lower, crop_upper, 
                                 final_shape, interpolation=interpolation)

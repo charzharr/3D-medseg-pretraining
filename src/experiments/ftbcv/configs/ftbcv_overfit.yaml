@@ -2,14 +2,14 @@
 # ---- ##  Experiment Setup, Logging Specifications, Environment  ## ---- #
 experiment:
   description: 'Sanity check: test 0 loss and 100% dice on 2 batches'
-  id: "(0906bcv)OFIT2_genunet_s1"     # for wandb run identification
+  id: "(0906bcv)OFIT2_dunet_s1"     # for wandb run identification
   name: 'ftbcv'   # for experiment module identification
   project: '3DSeg-Pretrain'
 
   debug:                                            # (Correct Alignment)
     mode: False                                     # < Check
     overfitbatch: True                              # < Check
-    wandb: False                                     # < Check
+    wandb: True                                     # < Check
     save: False                                     # < Check
     break_train_iter: False                         # < Check
     break_test_iter: False                          # < Check
@@ -40,11 +40,11 @@ model:
 
 train:
   epochs: 50
-  batch_size: 2
+  batch_size: 3
   examples_per_volume: 80
   num_workers: 0
 
-  patch_size: [48, 160, 160]
+  patch_size: [64, 160, 160]
   fg_bias: 0.666
   scale_range: 1.
 
@@ -59,7 +59,7 @@ train:
         weights_key: 'bcv'
 
 test:
-  batch_size: 3
+  batch_size: 4
 
 
 

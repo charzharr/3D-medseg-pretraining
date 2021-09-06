@@ -105,7 +105,9 @@ class DenseUNet(BaseModel):
                 stride=2, padding=1, output_padding=1)
             nn.init.xavier_normal_(self.final_deconv.weight)
 
-        print(f"💠 DenseUNet3d-{name} initialized.")
+        tot_params, tot_tparams = self.param_counts
+        print(f'💠 DenseUNet3d-{name} initialized w/ {out_channels} classes,\n'
+              f'   deconv={deconv}, and {tot_params:,} parameters.')
 
     def forward(self, x, dropout=False):
         f = F.relu(self.features(x))  # 32x downsampled -> ReLU (is BN'd)

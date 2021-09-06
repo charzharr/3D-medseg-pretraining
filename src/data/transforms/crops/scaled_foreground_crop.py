@@ -110,6 +110,7 @@ class ScaledForegroundCropper3d:
                     max_shp = int(scale_range[i][1] * final_shape[i])
                     samp_shape = torch.randint(min_shp, max_shp, (1,)).item()
                     crop_shape.append(samp_shape)
+            crop_shape = [min(c, s) for c, s in zip(crop_shape, volume_shape)]
 
             if sample_fg:
                 vol_shape = mask_tensor.shape

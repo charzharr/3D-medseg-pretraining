@@ -55,7 +55,7 @@ def sample_crop(image_shape, crop_shape, return_array=False):
     for v in valid_range:
         assert v >= 0
     
-    lower_indices = [torch.randint(n, (1,)).item() for n in valid_range]
+    lower_indices = [torch.randint(n+1, (1,)).item() for n in valid_range]
     upper_indices = [lower_indices[i] + crop_shape[i] for i in range(ndim)]
     if return_array:
         return np.array(lower_indices), np.array(upper_indices)
