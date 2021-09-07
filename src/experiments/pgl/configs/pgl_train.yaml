@@ -1,0 +1,72 @@
+
+# ---- ##  Experiment Setup, Logging Specifications, Environment  ## ---- #
+experiment:
+  description: |
+    > Reimplementation of PGL for 3D segmentation pretraining.
+    >   Data: ~1400 volumes from KiTS & MSD Hepatic  Vessel, Pancreas, Lung Tumor, Liver, Spleen.
+  id: "(0906pgl)OFITbyol_fulldata_mse_a1"     # for wandb run identification
+  name: 'pgl'   # for experiment module identification
+  project: '3DSeg-Pretrain'
+
+  debug:                                            # (Correct Alignment)
+    mode: False                                    # < Check
+    overfitbatch: False                             # < Check
+    wandb: False                                     # < Check
+    save: False                                      # < Check
+    break_train_iter: False                         # < Check
+    break_test_iter: False                          # < Check
+    test_every_n_epochs: 1
+  seed: 420
+  hpsamp: ""
+  checkpoint:
+    file: ''
+
+# ---- ##  Data Preprocessing, Loading, Transformation  ## ---- #
+data:  # describing project-wide data specifications
+  kits18: ''
+  msd: ''
+  bcv: ''
+
+
+# Model / Criterion / Other nn.Module Specifications
+model:
+  name: 'genesis_unet3d'  # 'genesis_unet3d'  # gn_unet3d
+  init: 'kaiming'
+  sync_bn: True
+
+
+# ---- ##  Training: iterations, criterion, optimization, etc.  ## ---- #
+train:
+  train_byol: True
+
+  start_epoch: 0
+  epochs: 100
+  batch_size: 2
+  examples_per_volume: 8
+  num_workers: 2
+
+  patch_size: [32, 96, 96]
+  fg_bias: 0.666
+  scale_range: [[1.1, 1.4], [1.1, 1.4], [1.1, 1.4]]
+
+  criterion:
+    name: 'byol'
+    byol:
+      p_norm: 2
+
+  optimizer:
+    name: 'adam'  # sgd, nesterov, adam
+    lr: .0002
+    wt_decay: 0 # 0.0001
+    adam:
+      betas: [0.9, 0.999]
+    sgd:
+      momentum: 0.9
+
+  scheduler:
+    name: 'consistencycosine'
+    rampup_rates: []
+    min_lr: 0.000001
+
+
+

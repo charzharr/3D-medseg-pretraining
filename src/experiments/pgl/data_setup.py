@@ -42,10 +42,8 @@ from dmt.data import OneToManyLoader
 import data.transforms as myT
 from data.kits19.dataset import get_df as get_kits_df
 from data.decathlon.dataset import get_dfs as get_msd_dfs
-
-
-# Data Setup & Loading Constants
-NUM_WORKERS = 4
+from data.transforms.crops.scaled_overlap_crop import ScaledOverlapCropper3d
+from data.transforms.crops.scaled_uniform_crop import ScaledUniformCropper3d
 
 
 # ------ ##   Main API from run_experiment()  ## ------ #
@@ -80,89 +78,22 @@ def get_data_components(cfg):
     train_set = PreprocessSampleSet(cfg, samples)
     print(f'[Took {time.time() - start:.2f} sec.]')
     
-    #### ⭐ TEMPORARY ⭐  test transforms here
-    
-    
-    
-    # Instantiate Transforms
-    overlap_cropper = myT.ScaledOverlapCropper3d(num_overlap_crops=3)
-    pgl_transforms = [
-        myT.Flip3d(p=0.5),
-        myT.GaussianNoise(p=0.1, mean=0., var=(0, 0.1)),
-        myT.GaussianBlur(p=0.2, kernel_size=(3, 10, 10), sigma=(0.5, 1)),
-        myT.ScaleIntensity(p=0.5, scale=(0.75, 1.25)),
-        myT.Gamma(p=0.5, gamma=(0.7, 1.5))
-    ]
-    pgl_transforms = [
-        myT.Flip3d(p=0.5),
-        myT.GaussianNoise(p=1, mean=0., var=(0, 0.1)),
-        myT.GaussianBlur(p=1, kernel_size=(3, 10, 10), sigma=(0.5, 1)),
-        myT.ScaleIntensity(p=1, scale=(0.75, 1.25)),
-        myT.Gamma(p=1, gamma=(0.7, 1.5))
-    ]
-    
-    start = time.time()
-    volume_d = train_set[0]  # sample, tensor, record_dict
-    volume = volume_d['tensor']
-    print(f'[Took {time.time() - start:.2f}s to get train_set volume.]')
-    
-    start = time.time()
-    crops = overlap_cropper(volume, (16, 96, 96), scale_range=(1.1, 1.4),
-                            min_overlap=0.1, n_times=3)
-    print(f'[Took {time.time() - start:.2f}s to get get crops.]')
-    
-    # Example run on a pair of crops
-    crop1, crop2 = crops[0][0]['tensor'], crops[0][1]['tensor']
-    
-    
-    crop = {'crop_image': crop1, 'other_shit': 1}
-    history = collections.OrderedDict()
-    history['ScaledOverlapCropper3d'] = {k: v for k, v in crop.items() 
-                                      if k != 'tensor'}
-    for transform in pgl_transforms:
-        name = transform.name
-        crop, receipt = transform(crop)
-        history[name] = receipt
-        print(name, receipt)
-        
-    # crop_obj = Crop(crop['crop_image'], sample, history, mask=crop['crop_mask'])
-    
-                    
-    
-    
-    
-    
-    
-    #### ⭐ TRANSFORM TEST END ⭐  
-    
-    
-    import IPython; IPython.embed(); 
-
     # 4. Create example loader
-    shuffle = False if cfg.debug.overfitbatch or cfg.debug.mode else True
+    debug = cfg.experiment.debug
+    shuffle = False if debug.overfitbatch or debug.mode else True
     train_loader = OneToManyLoader(
         train_set, 
         sample_processing_fn=patch_creator,
-        examples_per_sample=8,
+        examples_per_sample=cfg.train.examples_per_volume,
         example_collate_fn=example_collate_fn, 
         batch_size=cfg.train.batch_size,
         shuffle_samples=shuffle,
         shuffle_patches=shuffle, 
-        num_workers=NUM_WORKERS, 
+        num_workers=cfg.train.num_workers, 
         headstart=True, 
         drop_last=True
     )
     
-    
-    import IPython; IPython.embed(); 
-    
-    for i, batch in enumerate(train_loader):
-        print(i, batch)
-    
-    
-    import IPython; IPython.embed(); 
-                                   
-
     return {
         'train_df': pretrain_df,
         'train_set': train_set,
@@ -207,37 +138,78 @@ def _get_class_names(dataset, task=None):
     raise ValueError(f'Given dataset "{dataset}" is invalid.')
 
 
-# ------ ##   Data Structures for Storage and Loading  ## ------ #
+# ------ ##   Data Loading Components   ## ------ #
 
-def patch_creator(sample_volume_dict):
+def patch_creator(sampset_return_dict):
     """ 'sample_processing_fn' for the sample dataloader in OTM.
     Receives a dict of a single sample & its preprocessed entire volume. 
     Args:
-        sample_volume_dict: keys include 'sample' & 'tensor'
+        sampset_return_dict: keys include 'sample' & 'tensor'
     Returns:
-        Each patch counts as an example.
+        List of examples. An example = a patch pair & their info.
     """
-    patches_per_sample = 8
-    patch_size = 64
+    sampset_return_dict = sampset_return_dict[0]
+    sample = sampset_return_dict['sample']
+    volume_tensor = sampset_return_dict['tensor']
+    transform_history = sampset_return_dict['record_dict']
     
-    sample = sample_volume_dict[0]['sample']
-    volume_tensor = sample_volume_dict[0]['tensor']
+    cfg = sampset_return_dict['cfg']
+    examples_per_sample = cfg.train.examples_per_volume
+    patch_size = cfg.train.patch_size
+    if cfg.train.train_byol:
+        cropper = ScaledUniformCropper3d(patch_size, scale_range=(1.1, 1.4))
+    else:
+        cropper = ScaledOverlapCropper3d()
+    
+    transforms = [
+        myT.Flip3d(p=0.5),
+        myT.GaussianNoise(p=0.1, mean=0., var=(0, 0.1)),
+        myT.GaussianBlur(p=0.2, spacing=1,   # ignore space for now
+                            sigma=(0.5, 1)),
+        myT.ScaleIntensity(p=0.5, scale=(0.75, 1.25)),
+        myT.Gamma(p=0.5, gamma=(0.7, 1.5))
+    ]
+    
+    if cfg.train.train_byol:
+        crop_pairs = cropper(volume_tensor, n_times=examples_per_sample)
+    else:
+        crop_pairs = cropper(volume_tensor, patch_size, scale_range=(1.1, 1.4),
+                    min_overlap=0.1, n_times=examples_per_sample)
     
     examples = []
-    
-    
+    for i, crop_pair in enumerate(crop_pairs):
+        if cfg.train.train_byol:
+            crop1_t, crop2_t = crop_pair[0], crop_pair[0].clone()
+            
+            hist1 = collections.OrderedDict(transform_history)
+            hist1['ScaledUniformCrop3d'] = dict(crop_pair[1])
+            hist2 = collections.OrderedDict(transform_history)
+            hist2['ScaledUniformCrop3d'] = dict(crop_pair[1])
+        else:
+            crop1_d, crop2_d = crop_pair
+            crop1_t, crop2_t = crop1_d['final_tensor'], crop2_d['final_tensor']
+            
+            hist1 = collections.OrderedDict(transform_history)
+            hist1['ScaledOverlapCrop3d'] = {k: v for k, v in crop1_d.items() 
+                                            if 'tensor' not in k}
+            hist2 = collections.OrderedDict(transform_history)
+            hist2['ScaledOverlapCrop3d'] = {k: v for k, v in crop2_d.items() 
+                                            if 'tensor' not in k}
+        
+        for transform in transforms:
+            name = transform.name
+            crop1_t, receipt = transform(crop1_t)
+            hist1[name] = receipt if receipt else None
+        for transform in transforms:
+            name = transform.name
+            crop2_t, receipt = transform(crop2_t)
+            hist2[name] = receipt if receipt else None
+        
+        Crop1 = Crop(crop1_t, sample, hist1)
+        Crop2 = Crop(crop2_t, sample, hist2)
+        examples.append((Crop1, Crop2))
     
     return examples
-
-
-def example_collate_fn(batch_examples):
-    print(type(batch_examples))
-    batch = {
-        'X': [],
-        'samples': []
-    }
-    batch = batch_examples
-    return batch
 
 
 class Crop:
@@ -252,29 +224,44 @@ class Crop:
         """
         assert isinstance(transform_history, collections.OrderedDict)
         self.transform_history = transform_history
-        
-        self._sample = sample
-        self._tensor = tensor
-        
+        self.sample = sample
+        self.tensor = tensor.float()
+    
     @property
-    def tensor(self):
-        tensor = self._tensor
-        if tensor.dtype != torch.float32:
-            tensor = tensor.to(torch.float32)
-        return tensor
+    def crop_history(self):
+        return self.transform_history['ScaledOverlapCrop3d']
     
     @property
     def flip_history(self):
-        if 'Flip' not in self.transform_history:
+        if 'Flip3d' not in self.transform_history:
             return {'flipped_flags': [False, False, False]}
-        return self.transform_history['Flip']
+        return self.transform_history['Flip3d']
     
     @property
     def norm_history(self):
-        if 'ZNorm' not in self.transform_history:
-            return {'mean': 0, 'std': 1}
-        return self.transform_history['ZNorm']
+        if 'ZNormalize' not in self.transform_history:
+            return {'mean': self.tensor.mean(), 'std': self.tensor.std()}
+        return self.transform_history['ZNormalize']
+
+
+def example_collate_fn(batch_examples):
+    tensors1, tensors2 = [], []
+    samples, hists, crop_objs = [], [], []
+    for example in batch_examples:
+        tensors1.append(example[0].tensor)
+        tensors2.append(example[1].tensor)
+        samples.append(example[0].sample)
+        hists.append([example[0].transform_history, 
+                      example[1].transform_history])
+        crop_objs.append(example)
     
+    return {
+        'X': torch.cat([torch.stack(tensors1, dim=0), 
+                        torch.stack(tensors2, dim=0)], dim=0).unsqueeze(1),
+        'samples': samples,
+        'crops': crop_objs,
+        'records': hists
+    }
     
 
 class PreprocessSampleSet(SampleSet):
@@ -288,9 +275,6 @@ class PreprocessSampleSet(SampleSet):
     def __init__(self, cfg, samples):
         self.cfg = cfg
         super().__init__(samples)
-        
-        # Preprocessing transforms
-        self.znorm = myT.ZNormalize()
     
     def __getitem__(self, idx):
         """
@@ -298,7 +282,6 @@ class PreprocessSampleSet(SampleSet):
             A dictionary containing the original sample object, a preprocessed
             full tensor volume. 
         """
-        
         start = time.time()
         assert 0 <= idx < len(self), f'Index {idx} is out of bounds.'
         sample = self.samples[idx]
@@ -308,28 +291,23 @@ class PreprocessSampleSet(SampleSet):
         record_dict = OrderedDict()
         
         # 1. resample
-        start = time.time()
-        sitk_image = resample_sitk_isotropic(sitk_image, interpolation='linear')
-        print(f'[Took {time.time() - start:.2f}s to resample.]')
+        # start = time.time()
+        # sitk_image = resample_sitk_isotropic(sitk_image, interpolation='linear')
+        # record_dict['resample'] = {'interpolation': 'linear'}
+        # print(f'[Took {time.time() - start:.2f}s to resample.]')
         
         # 2. clamp + normalize
-        start = time.time()
         tensor = torch.tensor(sitk.GetArrayFromImage(sitk_image))
-        tensor = tensor.clamp(-1024, 325).float()
-        print('   Tensor type:', tensor.dtype)
-        print(f'[Took {time.time() - start:.2f}s to get array from image.]')
+        clamp_min, clamp_max = -1024, 325
+        tensor = tensor.clamp(clamp_min, clamp_max).float()
+        record_dict['Clamp'] = {'min': clamp_min, 'max': clamp_max}
         
-        start = time.time()
         mean, std = tensor.mean(), tensor.std()
-        tensor1 = (tensor - mean) / std
-        print(f'[Took {time.time() - start:.2f} sec (x1).] Raw: {tensor.shape}')
-        
-        start = time.time()
-        tensor, norm_op = self.znorm(tensor)
-        record_dict[self.znorm.name] = norm_op
-        print(f'[Took {time.time() - start:.2f} sec (x2).] Raw: {tensor.shape}')
+        tensor = (tensor - mean) / std
+        record_dict['ZNormalize'] = {'mean': mean.item(), 'std': std.item()}
         
         return {
+            'cfg': self.cfg,
             'sample': sample,
             'tensor': tensor,
             'record_dict': record_dict

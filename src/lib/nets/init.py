@@ -29,7 +29,7 @@ def weights_init_normal(m):
     #print(classname)
     if isinstance(m, conv_base_class):
         init.normal_(m.weight.data, 0.0, 0.02)
-        init.constant_(m.bias.data, 0.0)
+        # init.constant_(m.bias.data, 0.0)
     elif isinstance(m, linear_base_class):
         init.normal_(m.weight.data, 0.0, 0.02)
     elif isinstance(m, bn_base_class):
@@ -42,7 +42,7 @@ def weights_init_xavier(m):
     #print(classname)
     if isinstance(m, conv_base_class):
         init.xavier_normal_(m.weight.data, gain=1)
-        init.constant_(m.bias.data, 0.0)
+        # init.constant_(m.bias.data, 0.0)
     elif isinstance(m, linear_base_class):
         init.xavier_normal_(m.weight.data, gain=1)
     elif isinstance(m, bn_base_class):
@@ -55,7 +55,7 @@ def weights_init_kaiming(m):
     #print(classname)
     if isinstance(m, conv_base_class):
         init.kaiming_normal_(m.weight.data, a=0, mode='fan_in')
-        init.constant_(m.bias.data, 0.0)
+        # init.constant_(m.bias.data, 0.0)
     elif isinstance(m, linear_base_class):
         init.kaiming_normal_(m.weight.data, a=0, mode='fan_in')
     elif isinstance(m, bn_base_class):
@@ -68,7 +68,7 @@ def weights_init_orthogonal(m):
     #print(classname)
     if isinstance(m, conv_base_class):
         init.orthogonal_(m.weight.data, gain=1)
-        init.constant_(m.bias.data, 0.0)
+        # init.constant_(m.bias.data, 0.0)
     elif isinstance(m, linear_base_class):
         init.orthogonal_(m.weight.data, gain=1)
     elif isinstance(m, bn_base_class):

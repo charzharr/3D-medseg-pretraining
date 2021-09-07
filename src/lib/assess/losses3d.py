@@ -36,7 +36,9 @@ class BYOL3d:
         targ_norm = F.normalize(targ, dim=-1, p=2)
         loss = torch.sum(2 - 2 * (pred_norm * targ_norm).sum(dim=-1))
         loss /= pred.shape[0]
-        return loss
+        return {
+            'loss': loss
+        }
 
 
 class DiceLoss3d:
