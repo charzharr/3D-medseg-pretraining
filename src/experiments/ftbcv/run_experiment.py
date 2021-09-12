@@ -356,7 +356,6 @@ def get_model(cfg):
     percs = 1 / weights
     approx_logits = torch.log(percs)
 
-
     if cfg.model.name == 'nnunet3d':
         from experiments.ftbcv.nnunet3d import UNet3D
         model = UNet3D(n_input=1, n_class=14, deep_sup=cfg.train.deep_sup)

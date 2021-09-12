@@ -31,6 +31,7 @@ from multiprocessing.pool import ThreadPool
 from collections import OrderedDict
 import pandas as pd
 import SimpleITK as sitk
+import numpy as np
 
 import torch
 import torchio
@@ -46,17 +47,36 @@ from data.transforms.crops.scaled_overlap_crop import ScaledOverlapCropper3d
 from data.transforms.crops.scaled_uniform_crop import ScaledUniformCropper3d
 
 
+dataset_normalize = {
+    'kits': {'spacing': 0.78, 'clip': [-79, 304], 'norm': [100.93, 76.9]},
+    'msd': {
+        'Liver': {'spacing': 1, 'clip': [-17, 201], 
+                  'norm': [99.4, 39.36]},
+        'Lung': {'spacing': 1.24, 'clip': [-1024, 325], 
+                 'norm': [-158.58, 324.7]},
+        'Pancreas': {'spacing': 2.5, 'clip': [-96, 215], 
+                     'norm': [77.99, 75.4]},
+        'HepaticVessel': {'spacing': 1.5, 'clip': [-3, 243], 
+                     'norm': [104.37, 52.62]},
+        'Spleen': {'spacing': 1.6, 'clip': [-41, 176], 
+                     'norm': [99.29, 39.47]},
+        'Colon': {'spacing': 3, 'clip': [-30, 165.82], 
+                     'norm': [62.18, 32.65]},
+    }
+}
+
+
+
 # ------ ##   Main API from run_experiment()  ## ------ #
 
 def get_data_components(cfg):
     import time; start = time.time();
-    logging.getLogger().setLevel(logging.CRITICAL)
 
     # 1. Collect the dfs & process them into 1
     kits_df = get_kits_df()
     kits_df['dataset'] = 'kits'
 
-    msd_include_tasks = ['HepaticVessel', 'Pancreas', 'Lung', 'Liver', 'Spleen']
+    msd_include_tasks = ['HepaticVessel', 'Pancreas', 'Lung', 'Liver']
     msd_dfs = get_msd_dfs()  # dict of dfs
     msd_df_list = [msd_dfs[k] for k in msd_dfs if k in msd_include_tasks]
     for df in msd_df_list:
@@ -291,34 +311,68 @@ class PreprocessSampleSet(SampleSet):
         """
         start = time.time()
         assert 0 <= idx < len(self), f'Index {idx} is out of bounds.'
+        
+        # Get Data
         sample = self.samples[idx]
+        dataset = sample.dataset
         sitk_image = sample.image.sitk_image  # loads path to sitk obj
-        # print(f'[Took {time.time() - start:.2f}s to get sitk.] Raw: {sample.image.shape}')
-        
         record_dict = OrderedDict()
+                
+        # Dataset-specific resample & normalize
+        start = time.time()
+        if dataset == 'msd':
+            sub_task = sample.task
+            norm_d = dataset_normalize['msd'][sub_task]
+            ispac = norm_d['spacing']
+            clip_min, clip_max = norm_d['clip']
+            norm_sub, norm_div = norm_d['norm']
+        else:
+            assert dataset == 'kits'
+            norm_d = dataset_normalize['kits']
+            ispac = norm_d['spacing']
+            clip_min, clip_max = norm_d['clip']
+            norm_sub, norm_div = norm_d['norm']
         
-        # 1. resample
-        # start = time.time()
-        # sitk_image = resample_sitk_isotropic(sitk_image, interpolation='linear')
-        # record_dict['resample'] = {'interpolation': 'linear'}
-        # print(f'[Took {time.time() - start:.2f}s to resample.]')
+        sitk_image = sitk.Clamp(sitk_image, sitk.sitkInt16, clip_min, clip_max)
+        record_dict['Clamp'] = {'min': clip_min, 'max': clip_max}
+        
+        sitk_image = (sitk_image - norm_sub) / norm_div
+        record_dict['ZNormalize'] = {'mean': norm_sub, 'std': norm_div}
+        
+        if dataset == 'kits':  # transpose axis
+            transpose = sitk.PermuteAxesImageFilter()
+            transpose.SetOrder([2, 1, 0])
+            print('kits old', sitk_image.GetSpacing(), sitk_image.GetSize())
+            sitk_image = transpose.Execute(sitk_image)
+            print('kits new', sitk_image.GetSpacing(), sitk_image.GetSize())
+        
+        orig_spacing = np.array(sitk_image.GetSpacing())
+        print(dataset, orig_spacing, ispac)
+        if orig_spacing[-1] != ispac:
+            resample = sitk.ResampleImageFilter()
+            resample.SetInterpolator = sitk.sitkNearestNeighbor
+            resample.SetOutputDirection(sitk_image.GetDirection())
+            resample.SetOutputOrigin(sitk_image.GetOrigin())
+
+            new_spacing = list(orig_spacing[:2]) + [ispac]
+            resample.SetOutputSpacing(new_spacing)
+
+            orig_size = np.array(sitk_image.GetSize())
+            new_size = orig_size * (orig_spacing / new_spacing)
+            new_size = np.ceil(new_size).astype(np.int32).tolist()
+            resample.SetSize(new_size)
+            sitk_image = resample.Execute(sitk_image)
+            record_dict['Resample'] = {'interpolation': 'nearest',
+                'old_size': orig_size, 'new_size': new_size,
+                'old_spacing': orig_spacing, 'new_spacing': new_spacing}
+        else:
+            record_dict['Resample'] = None
+        print(f'[Took {time.time() - start:.2f}s to norm + resample.]')
         
         # Get Tensor
-        np_image = sitk.GetArrayFromImage(sitk_image)
-        if sample.dataset == 'kits':
-            np_image = np_image.T
-        tensor = torch.from_numpy(np_image)
+        tensor = torch.from_numpy(sitk.GetArrayFromImage(sitk_image))
         record_dict['ReadImage'] = {'shape': tensor.shape}
         assert tensor.shape[1:] == (512, 512), f'{tensor.shape}{sample.dataset}'
-        
-        # Clamp + normalize
-        clamp_min, clamp_max = -1024, 325
-        tensor = tensor.clamp(clamp_min, clamp_max).float()
-        record_dict['Clamp'] = {'min': clamp_min, 'max': clamp_max}
-        
-        mean, std = tensor.mean(), tensor.std()
-        tensor = (tensor - mean) / std
-        record_dict['ZNormalize'] = {'mean': mean.item(), 'std': std.item()}
         
         return {
             'cfg': self.cfg,

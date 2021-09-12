@@ -1,5 +1,4 @@
 #!/bin/bash
-#$ -o "/afs/crc.nd.edu/user/y/yzhang46/_3DPRE/src/experiments/ftbcv/artifacts/out.log"
 
 #$ -M yzhang46@nd.edu
 #$ -m abe                # Send mail when job begins, ends and aborts
@@ -9,7 +8,7 @@
 
 #$ -N save_debug
 #$ -q gpu@@csecri-p100   # gpu@@csecri-p100, gpu@@csecri-titanxp 
-#$ -l gpu_card=2
+#$ -l gpu_card=3
 
 
 export PROJ_PATH="/afs/crc.nd.edu/user/y/yzhang46/_3DPRE"
@@ -53,4 +52,4 @@ echo -e "=-=-=-=-=-=-=-=-=-=-=-=-=\n"
 
 python3 -u run.py \
         --config $RUN_CFG \
-        --distributed
+        

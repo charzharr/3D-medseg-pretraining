@@ -20,6 +20,7 @@ import collections
 from collections import namedtuple
 
 import torch, torchvision
+import torch.nn.functional as F
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader
 import SimpleITK as sitk
@@ -107,15 +108,19 @@ def run(rank, cfg):
     model_d = get_model(cfg)
     model = model_d['model'].to(device)
     ema_model = model_d['ema_model'].to(device)
+    predictor = model_d['predictor'].to(device)
     if not cfg.experiment.distributed and len(gpu_indices) > 1:
         print(f'  * {len(gpu_indices)} GPUs, using nn.DataParallel.')
         model = torch.nn.DataParallel(model)
         ema_model = torch.nn.DataParallel(ema_model)
+        predictor = torch.nn.DataParallel(predictor)
     elif cfg.experiment.distributed:
         model = DDP(model, device_ids=[rank], output_device=rank)
+        ema_model = DDP(ema_model, device_ids=[rank], output_device=rank)
+        predictor = DDP(predictor, device_ids=[rank], output_device=rank)
         print(f'  * Rank {rank} using device {device} via nn.DDP.')
-        if cfg.model.sync_bn:
-            model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
+        # if cfg.model.sync_bn:
+        #     model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
     
     # Get criterion, optimizer, scheduler
     if rank == 0:
@@ -123,7 +128,8 @@ def run(rank, cfg):
     from lib.assess.losses3d import BYOL3d
     criterion = BYOL3d()
     
-    optimizer = setup.get_optimizer(cfg, model.parameters())
+    params = list(model.parameters()) + list(predictor.parameters())
+    optimizer = setup.get_optimizer(cfg, params)
     scheduler = setup.get_scheduler(cfg, optimizer)
 
     # Data Pipeline
@@ -150,6 +156,7 @@ def run(rank, cfg):
                 break
         train_loader = list(itertools.islice(itertools.cycle(batches), 30))
     
+    synchronize()
     tot_epochs = cfg['train']['epochs'] - cfg['train']['start_epoch']
     global_iter = 0
     for epoch in range(cfg['train']['start_epoch'], cfg['train']['epochs']):
@@ -170,10 +177,13 @@ def run(rank, cfg):
             X = batch['X'].to(device, non_blocking=True)
             
             with torch.no_grad():
-                emaout = ema_model(X, enc_only=True)['out']
-            out = model(X, enc_only=True)['out']
+                emaout = ema_model(X)['out']
+            out = model(X)['out']
+            fin_out = predictor(out)
             
-            loss_d = criterion(out, emaout)
+            import IPython; IPython.embed(); 
+            
+            loss_d = criterion(fin_out, emaout)
             loss = loss_d['loss']
             
             optimizer.zero_grad()
@@ -182,12 +192,14 @@ def run(rank, cfg):
             update_ema_model(model, ema_model, cfg.model.ema_alpha)
 
             # Iteration & Epoch Training Metrics
-            iter_time = WATCH.toc('iter', disp=False)
-            loss_str = f'loss {loss.item():.3f}'
-            print_niter = 100 if not debug.overfitbatch else 10
-            if rank == 0 and it % print_niter == print_niter - 1:
-                print(f"    Iter {it+1}/{len(train_loader)} "
-                      f"({iter_time:.1f} sec, {mem():.1f} GB) - {loss_str} ")
+            if rank == 0:
+                iter_time = WATCH.toc('iter', disp=False)
+                loss_str = f'loss {loss.item():.3f}'
+                print_niter = 100 if not debug.overfitbatch else 10
+                if rank == 0 and it % print_niter == print_niter - 1:
+                    print(f"    Iter {it+1}/{len(train_loader)} "
+                        f"({iter_time:.1f} sec, {mem():.1f} GB) - {loss_str} ",
+                        flush=True)
 
             epmeter.update({'loss': loss.item()})
             
@@ -195,13 +207,15 @@ def run(rank, cfg):
             WATCH.tic('iter')
             if debug['break_train_iter'] and it >= 2: 
                 break
-
+        
+        scheduler.step(epoch=epoch, value=0)
+        
         # -- Epoch Values -- #
-        epoch_mets = statistics.EpochMetrics()
-        train_mets = epmeter.avg()
-        epoch_mets.update(train_mets, ['loss'], 'train_ep_')
-
         if rank == 0:
+            epoch_mets = statistics.EpochMetrics()
+            train_mets = epmeter.avg()
+            epoch_mets.update(train_mets, ['loss'], 'train_ep_')
+            
             epoch_mets.print(pre="\nEpoch Stats\n-----------\n")
 
             force_sum = True if epoch == cfg.train.epochs - 1 else False
@@ -213,39 +227,36 @@ def run(rank, cfg):
                 print(f'🚨  Model-saving functionality is off! \n')
             if debug['save'] and epoch % 10 == 9:
                 save_model(cfg, model.state_dict(), tracker, epoch, source_code)
-        
-        scheduler.step(epoch=epoch, value=0)
-        WATCH.toc(name='epoch')
+            WATCH.toc(name='epoch')
         # End of epoch #
 
 
 def get_model(cfg):
-    if cfg.model.name == 'denseunet3d':
-        from lib.nets.volumetric.denseunet3d import get_model as get_dunet
-        model = get_dunet(201, num_classes=14, deconv=False)
-        ema_model = create_ema_model(get_dunet(201, num_classes=14, 
-                                               deconv=False))
-    elif cfg.model.name == 'genesis_unet3d':
-        from .pgl_unet3d import UNet3D as genesis_unet3d
-        model = genesis_unet3d(n_input=1, n_class=14, act='relu')
-        ema_model = create_ema_model(genesis_unet3d(n_input=1, n_class=14, 
-                                                    act='relu'))
-    elif cfg.model.name == 'resmednet3d':  # already inited
-        from lib.nets.volumetric.resnet3d_mednet import generate_resnet3d
-        model = generate_resnet3d(in_channels=1, classes=14, model_depth=34)
-    elif cfg.model.name == 'gn_unet3d':
-        from lib.nets.volumetric.resunet3d import UNet3D
-        model = UNet3D(1, 14, final_sigmoid=False, is_segmentation=False)
+    if cfg.model.name == 'nnunet3d':
+        from experiments.pgl.nnunet3d import PGL_UNet3d, ProjectionHead
+        model = PGL_UNet3d(in_channels=1, num_classes=14)
+        ema_model = PGL_UNet3d(in_channels=1, num_classes=14)
+        ema_model = create_ema_model(ema_model)
+        predictor = ProjectionHead(256, latent_channels=4096, out_channels=256)
+    # elif cfg.model.name == 'denseunet3d':
+    #     from lib.nets.volumetric.denseunet3d import get_model as get_dunet
+    #     model = get_dunet(201, num_classes=14, deconv=False)
+    #     ema_model = create_ema_model(get_dunet(201, num_classes=14, 
+    #                                            deconv=False))
+    # elif cfg.model.name == 'genesis_unet3d':
+    #     from .pgl_unet3d import UNet3D as genesis_unet3d
+    #     model = genesis_unet3d(n_input=1, n_class=14, act='relu')
+    #     ema_model = create_ema_model(genesis_unet3d(n_input=1, n_class=14, 
+    #                                                 act='relu'))
+    # elif cfg.model.name == 'resmednet3d':  # already inited
+    #     from lib.nets.volumetric.resnet3d_mednet import generate_resnet3d
+    #     model = generate_resnet3d(in_channels=1, classes=14, model_depth=34)
+    # elif cfg.model.name == 'gn_unet3d':
+    #     from lib.nets.volumetric.resunet3d import UNet3D
+    #     model = UNet3D(1, 14, final_sigmoid=False, is_segmentation=False)
     else:
         raise ValueError(f'Model {cfg.model.name} is not supported.')
 
-    # initalize model weights
-    if cfg.model.init:
-        # Initialize
-        init_type = cfg.model.init
-        init_net.init_weights(model, init_type=init_type)
-        print(f'   (Model) Successfully initialized weights via {init_type}.')
-    
     # Initialize parameters
     if cfg.experiment.checkpoint.file:  # Checkpoint handling
         filename = cfg.experiment.checkpoint.file
@@ -264,10 +275,23 @@ def get_model(cfg):
             checkpoint_d = torch.load(filepath, map_location='cpu')
             state_dict = checkpoint_d['state_dict']
             print(model.load_state_dict(state_dict))
+            ema_state_dict = checkpoint_d['ema_state_dict']
+            print(ema_model.load_state_dict(ema_state_dict))
+            predictor_state_dict = checkpoint_d['predictor_state_dict']
+            print(predictor.load_state_dict(predictor_state_dict))
+    else: 
+        # Initialize
+        init_type = cfg.model.init
+        if init_type:
+            init_net.init_weights(model, init_type=init_type)
+            init_net.init_weights(ema_model, init_type=init_type)
+            init_net.init_weights(predictor, init_type=init_type)
+        print(f'   (Model) Successfully initialized weights via {init_type}.')
 
     return {
         'model': model,
-        'ema_model': ema_model
+        'ema_model': ema_model,
+        'predictor': predictor
     }
 
 
@@ -300,6 +324,18 @@ def mem():
     return mem_map[prim_card_num]/1000
 
 
+def synchronize():
+    """
+    Helper function to synchronize between multiple processes when
+    using distributed training
+    """
+    if not torch.distributed.is_initialized():
+        return
+    world_size = torch.distributed.get_world_size()
+    rank = torch.distributed.get_rank()
+    if world_size == 1:
+        return
+    torch.distributed.barrier()
 
 
 

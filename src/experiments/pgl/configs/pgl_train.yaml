@@ -4,15 +4,15 @@ experiment:
   description: |
     > Reimplementation of PGL for 3D segmentation pretraining.
     >   Data: ~1400 volumes from KiTS & MSD Hepatic  Vessel, Pancreas, Lung Tumor, Liver, Spleen.
-  id: "(0906pgl)OFITbyol_fulldata_mse_a1"     # for wandb run identification
+  id: "(0911pgl)OFIT_fulldata_mse_a1"     # for wandb run identification
   name: 'pgl'   # for experiment module identification
   project: '3DSeg-Pretrain'
 
   debug:                                            # (Correct Alignment)
-    mode: False                                    # < Check
-    overfitbatch: False                             # < Check
+    mode: False                                     # < Check
+    overfitbatch: True                             # < Check
     wandb: False                                     # < Check
-    save: False                                      # < Check
+    save: True                                      # < Check
     break_train_iter: False                         # < Check
     break_test_iter: False                          # < Check
     test_every_n_epochs: 1
@@ -30,10 +30,9 @@ data:  # describing project-wide data specifications
 
 # Model / Criterion / Other nn.Module Specifications
 model:
-  name: 'genesis_unet3d'  # 'genesis_unet3d'  # gn_unet3d
+  name: 'nnunet3d'  # 'genesis_unet3d'  # gn_unet3d
   init: 'kaiming'
-  sync_bn: True
-  
+  sync_bn: False
   ema_alpha: 0.99
 
 
@@ -48,7 +47,7 @@ train:
   num_workers: 2
 
   patch_size: [32, 96, 96]
-  scale_range: [0.8, 1.4]
+  scale_range: [0.7, 1.4]
 
   criterion:
     name: 'byol'
@@ -57,7 +56,7 @@ train:
 
   optimizer:
     name: 'adam'  # sgd, nesterov, adam
-    lr: .0002
+    lr: .002
     wt_decay: 0 # 0.0001
     adam:
       betas: [0.9, 0.999]
