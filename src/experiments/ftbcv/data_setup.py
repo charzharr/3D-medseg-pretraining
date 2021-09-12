@@ -13,7 +13,7 @@ Fine-Tuning on BCV (settings take from PGL):
     - SGD 0.01 for 100 epochs, batch 8
 """
 
-import logging
+# import logging
 import time
 import pathlib
 import collections

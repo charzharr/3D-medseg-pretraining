@@ -104,6 +104,7 @@ class Resize3d(Transform):
     
     
     def invert(self, image, record):
+        # TODO.
         final_size = record['input_shape']
         interpolation = record['interpolation']
         return Resize3d.resize(image, final_size, interpolation)

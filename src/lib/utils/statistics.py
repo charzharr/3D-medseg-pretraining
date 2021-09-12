@@ -234,7 +234,7 @@ class EpochMetrics(dict):
 
         if ret_string:
             return string
-        print(string)
+        print(string, flush=True)
 
 # Basic Tests
 if __name__ == '__main__':

@@ -4,7 +4,7 @@ Base class for all 2D & 3D image transforms.
 
 from multiprocessing import Value
 import time
-import logging
+# import logging
 import numbers
 import collections
 from abc import ABC, abstractmethod
@@ -37,7 +37,7 @@ class Transform(ABC):
         """
         start = time.time()
         ret = self.apply_transform(data, *args, **kwargs)
-        logging.info(f'🤖 {self.name} took {time.time() - start:.2f} sec.')
+        # logging.info(f'🤖 {self.name} took {time.time() - start:.2f} sec.')
         return ret
         
     @abstractmethod

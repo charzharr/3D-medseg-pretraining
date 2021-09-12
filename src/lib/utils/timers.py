@@ -18,7 +18,7 @@ class StopWatch:
 
     def toc(self, name='default', disp=True):
         if name not in self.starts:
-            print(f"StopWatch({name}) did not get tic'd yet.")
+            print(f"StopWatch({name}) did not get tic'd yet.", flush=True)
             return
         
         self.stops[name] = time.time()
@@ -34,13 +34,17 @@ class StopWatch:
         elapsed = self.stops[name] - self.starts[name]
         if elapsed > 0:
             if elapsed > 4200:
-                print(f"StopWatch({name}) took {elapsed/3600:.2f} hrs")
+                print(f"StopWatch({name}) took {elapsed/3600:.2f} hrs",
+                      flush=True)
             elif elapsed > 60:
-                print(f"StopWatch({name}) took {elapsed/60:.2f} min")
+                print(f"StopWatch({name}) took {elapsed/60:.2f} min",
+                      flush=True)
             else:
-                print(f"StopWatch({name}) took {elapsed:.2f} sec")
+                print(f"StopWatch({name}) took {elapsed:.2f} sec",
+                      flush=True)
         else:
-            print(f"StopWatch({name}) did not get toc'd for its tic.")
+            print(f"StopWatch({name}) did not get toc'd for its tic.",
+                  flush=True)
 
     def reset(self):
         self.starts = {}  # time in seconds

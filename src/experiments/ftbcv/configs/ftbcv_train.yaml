@@ -6,7 +6,7 @@ experiment:
     >   Data: 30 volumes of 13 abdominal structures.
     >    9/4 Best Settings: Gen-UNet, PGLscales (1.1, 1.4), wCE ('bcv'), bbgdc
     >    9/10 Use nnUNet3d Settings: fixed sampling, network, optim, deep-sup.
-  id: "(0911bcv-3g)TUNE_nnunet3d_nesterov_cedc_s4"     # for wandb run identification
+  id: "(0911bcv-3x)TUNE_nnunet3d_nesterov_cedc_s1"     # for wandb run identification
 
   name: 'ftbcv'   # for experiment module identification
   project: '3DSeg-Pretrain'
@@ -34,7 +34,7 @@ data:  # describing project-wide data specifications
   msd: ''
   bcv:
     num_classes: 14
-    split: '60-20-20_4.csv'
+    split: '60-20-20_1.csv'
 
 
 # Model / Criterion / Other nn.Module Specifications
@@ -50,7 +50,7 @@ model:
 train:
   deep_sup: True
 
-  epochs: 250
+  epochs: 120
   batch_size: 2
   examples_per_volume: 100  # 250 iterations per epoch (nnUNet)
   num_workers: 2

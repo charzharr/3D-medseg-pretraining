@@ -173,7 +173,6 @@ def run(rank, cfg, inference_metrics_queue):
     test_set = data_d['test_set']
     
     # ------------------ ##  Training Action  ## ------------------ #
-    synchronize()
     if rank == 0:
         output.header_one('II. Training')
     
@@ -194,7 +193,7 @@ def run(rank, cfg, inference_metrics_queue):
         train_loader = list(itertools.islice(itertools.cycle(batches), 50))
         val_set._samples = [val_set.samples[0]]
     
-
+    synchronize()
     tot_epochs = cfg['train']['epochs'] - cfg['train']['start_epoch']
     global_iter = 0
     for epoch in range(cfg['train']['start_epoch'], cfg['train']['epochs']):
@@ -268,7 +267,7 @@ def run(rank, cfg, inference_metrics_queue):
                     f"{loss_str} \n"
                     f"      jaccard {iter_metrics_d['jaccard_mean']:.3f}, "
                     f"dice {iter_metrics_d['dice_mean']:.3f}\n"
-                    f"       {iter_metrics_d['dice_class']}"
+                    f"       {iter_metrics_d['dice_class']}", flush=True
                 )
 
                 update_mets = ['loss', 'dice_mean', 'jaccard_mean']
@@ -347,6 +346,7 @@ def run(rank, cfg, inference_metrics_queue):
                 save_model(cfg, model.state_dict(), tracker, epoch, source_code)
         
             WATCH.toc(name='epoch')
+        synchronize()
         # --  End of epoch -- #
 
 
@@ -541,7 +541,8 @@ def test_metrics(cfg, model, dataset, epoch, test_metrics_queue,
             cba = CBA(image, cfg.train.patch_size, overlap, 
                       test_batch_size, num_classes, device=cba_device)
             if cfg.experiment.rank == 0:
-                print(f'     Getting predictions for {len(cba)} batches.')
+                print(f'     Getting predictions for {len(cba)} batches.',
+                      flush=True)
             
             # pstart = time.time()
             for bidx, batch in enumerate(cba):
@@ -566,7 +567,8 @@ def test_metrics(cfg, model, dataset, epoch, test_metrics_queue,
             
             if cfg.experiment.rank == 0:
                 elaps = WATCH.toc(f'{name}_iter', disp=False)
-                print(f'Completed inference for vol {i+1} ({elaps:.2f} sec).\n')
+                print(f'Completed inference for vol {i+1} ({elaps:.2f} sec).\n',
+                      flush=True)
             WATCH.tic(f'{name}_iter')
 
     # While last volume's metrics is computing, save sample
@@ -581,7 +583,7 @@ def test_metrics(cfg, model, dataset, epoch, test_metrics_queue,
         filename = (f'{cfg.experiment.id}_ep{epoch}_lastex_'
                     f'prediction.nii.gz')
         save_path = os.path.join(curr_path, 'artifacts', filename)
-        print(f'Saving prediction as "{filename}" | Success.')
+        print(f'Saving prediction as "{filename}" | Success.', flush=True)
         sitk.WriteImage(sitk_pred, save_path)
 
     # Accumulate metrics & print results
@@ -604,7 +606,7 @@ def test_metrics(cfg, model, dataset, epoch, test_metrics_queue,
                   f'       Dice: {float(mets["dice_mean"]):.2f} \n'
                   f'        {mets["dice_class"]} \n'
                   f'       Jaccard: {float(mets["jaccard_mean"]):.2f} \n'
-                  f'        {mets["jaccard_class"]}') 
+                  f'        {mets["jaccard_class"]}', flush=True) 
 
     if cfg.experiment.distributed:
         torch.cuda.empty_cache()
@@ -618,7 +620,7 @@ def test_metrics(cfg, model, dataset, epoch, test_metrics_queue,
             jaccard_mean = tensor[1].item() / num_examples
             print(f'⭐ {name.title()} DDP Results for {num_examples} images: \n'
                   f'       Avg Dice: {dice_mean:.2f} \n'
-                  f'       Avg Jaccard: {jaccard_mean:.2f} \n')
+                  f'       Avg Jaccard: {jaccard_mean:.2f} \n', flush=True)
 
             WATCH.toc(name.title(), disp=True)
             return {

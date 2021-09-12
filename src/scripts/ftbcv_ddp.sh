@@ -1,7 +1,6 @@
 #!/bin/bash
 
 #$ -N save_debug
-#$ -o "/afs/crc.nd.edu/user/y/yzhang46/_3DPRE/src/experiments/ftbcv/artifacts/out.log"
 
 #$ -M yzhang46@nd.edu
 #$ -m abe                # Send mail when job begins, ends and aborts
