@@ -21,6 +21,7 @@ import multiprocessing
 from collections import OrderedDict
 import pandas as pd
 
+import numpy as np
 import torch
 import torchio
 import dmt
@@ -29,6 +30,7 @@ from dmt.utils.io.images3d import resample_sitk_isotropic
 from dmt.data import OneToManyLoader
 
 import data.transforms as myT
+from data.transforms.resize import resize_segmentation3d
 from data.bcv.dataset import get_df as get_bcv_df, CLASSES as bcv_classes
 from data.utils import split
 
@@ -145,6 +147,7 @@ def get_data_components(cfg):
 
     return {
         'df': df,
+        'samples': samples,
         'train_df': train_df,
         'train_set': train_set,
         'train_loader': train_loader,
@@ -162,12 +165,55 @@ def _get_sample(args):
     class_names = _get_class_names('bcv')
     class_vals = list(range(len(class_names)))
     
-    mask = ScalarMask3D(mask, class_names=class_names, class_values=class_vals)
-    
     sitk_image = sitk.ReadImage(image, sitk.sitkInt16)
-    sitk_image = sitk.Clamp(sitk_image, sitk.sitkInt16, -1024, 325)
-    sitk_image = sitk.NormalizeImageFilter().Execute(sitk_image)
+    sitk_image = sitk.Clamp(sitk_image, sitk.sitkInt16, -958, 325)
+
+    mean, std = 82.92, 136.97
+    sitk_image = (sitk_image - mean) / std
+    # sitk_image = sitk.NormalizeImageFilter().Execute(sitk_image)
+    record = OrderedDict([('ZNormalize', {'mean': mean, 'std': std})])
+
+    # resample
+    resample = sitk.ResampleImageFilter()
+    resample.SetInterpolator = sitk.sitkNearestNeighbor
+    resample.SetOutputDirection(sitk_image.GetDirection())
+    resample.SetOutputOrigin(sitk_image.GetOrigin())
+
+    orig_spacing = np.array(sitk_image.GetSpacing())
+    new_spacing = list(orig_spacing[:2]) + [3]
+    resample.SetOutputSpacing(new_spacing)
+
+    orig_size = np.array(sitk_image.GetSize())
+    new_size = orig_size * (orig_spacing / new_spacing)
+    new_size = np.ceil(new_size).astype(np.int32).tolist()
+    resample.SetSize(new_size)
+    sitk_image = resample.Execute(sitk_image)
+    
+    mask = sitk.ReadImage(mask, sitk.sitkUInt8)
+    mask_arr = sitk.GetArrayFromImage(mask)
+    mask_arr = resize_segmentation3d(mask_arr, new_size[::-1], 
+                                     class_ids=list(range(1, 14)))
+    new_mask = sitk.GetImageFromArray(mask_arr)
+    new_mask.SetOrigin(mask.GetOrigin())
+    new_mask.SetDirection(mask.GetDirection())
+    new_mask.SetSpacing(new_spacing)
+
+    # if index == 26:
+    #     sitk.WriteImage(sitk_image, 'aniso_orig_image.nii.gz')
+    #     sitk.WriteImage(mask, 'aniso_orig_mask.nii.gz')
+    #     sitk.WriteImage(new_sitk_image, 'aniso_resamp_image.nii.gz')
+    #     sitk.WriteImage(new_mask, 'aniso_resamp_mask.nii.gz')
+
+    
+
+    # print(f'Setting spacing from {orig_spacing} to {new_spacing} \n'
+    #       f'  Hypo new size from {orig_size} to {new_size} \n'
+    #       f'  Size from {sitk_image.GetSize()} to {sitk.GetArrayFromImage(sitk_image).shape} \n'
+    #       f'  New Mask: {mask.GetSize()}')
+
     image = ScalarImage3D(sitk_image, container_type=sitk.sitkFloat32)
+    mask = ScalarMask3D(new_mask, class_names=class_names, 
+                        class_values=class_vals)
     
     sample_dict = {
         'index': index, 
@@ -176,6 +222,7 @@ def _get_sample(args):
         'mask': mask,
         'size': size, 
         'subset': subset,
+        'records': record
     }
     sample = Sample(sample_dict)
     print(f'    Took {time.time() - start:.2f}s for sample creation.')
@@ -288,8 +335,9 @@ class BCVSampleSet(SampleSet):
         sitk_mask = sample.mask.sitk_image
         mask_tens = torch.from_numpy(sitk.GetArrayFromImage(sitk_mask))
         assert mask_tens.shape == tensor.shape
+        assert mask_tens.shape[1:] == (512, 512)
         
-        record_dict = OrderedDict()
+        record_dict = sample.records  # OrderedDict()
         
         if not self.is_train:
             mask_1h = sample.mask.get_one_hot(crop=mask_tens, 

@@ -33,6 +33,8 @@ model:
   name: 'genesis_unet3d'  # 'genesis_unet3d'  # gn_unet3d
   init: 'kaiming'
   sync_bn: True
+  
+  ema_alpha: 0.99
 
 
 # ---- ##  Training: iterations, criterion, optimization, etc.  ## ---- #
@@ -41,13 +43,12 @@ train:
 
   start_epoch: 0
   epochs: 100
-  batch_size: 2
+  batch_size: 12
   examples_per_volume: 8
   num_workers: 2
 
   patch_size: [32, 96, 96]
-  fg_bias: 0.666
-  scale_range: [[1.1, 1.4], [1.1, 1.4], [1.1, 1.4]]
+  scale_range: [0.8, 1.4]
 
   criterion:
     name: 'byol'

@@ -139,6 +139,7 @@ def run(rank, cfg):
     # ------------------ ##  Training Action  ## ------------------ #
     if rank == 0:
         output.header_one('II. Training')
+        print(f'   (Training BYOL Mode: {cfg.train.train_byol})')
     
     if debug['overfitbatch']:
         print(f'🚨  Overfitting a set of minibatches! \n')
@@ -166,8 +167,6 @@ def run(rank, cfg):
             records = batch['records']
             crop_objs = batch['crops']
             
-            import IPython; IPython.embed(); 
-            
             X = batch['X'].to(device, non_blocking=True)
             
             with torch.no_grad():
@@ -180,12 +179,14 @@ def run(rank, cfg):
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+            update_ema_model(model, ema_model, cfg.model.ema_alpha)
 
             # Iteration & Epoch Training Metrics
             iter_time = WATCH.toc('iter', disp=False)
             loss_str = f'loss {loss.item():.3f}'
-            if rank == 0:
-                print(f"\n    Iter {it+1}/{len(train_loader)} "
+            print_niter = 100 if not debug.overfitbatch else 10
+            if rank == 0 and it % print_niter == print_niter - 1:
+                print(f"    Iter {it+1}/{len(train_loader)} "
                       f"({iter_time:.1f} sec, {mem():.1f} GB) - {loss_str} ")
 
             epmeter.update({'loss': loss.item()})

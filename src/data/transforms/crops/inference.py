@@ -51,7 +51,7 @@ class ChopBatchAggregate3d:
         mask_shape = [num_classes] + list(self.tensor.shape)
         self.accum_tensor = torch.zeros(mask_shape, dtype=torch.float32,
                                         device=self.device, requires_grad=False)
-        self.average_mask = torch.ones(mask_shape, dtype=torch.uint8,
+        self.average_mask = torch.zeros(mask_shape, dtype=torch.uint8,
                                         device=self.device, requires_grad=False)
     
 
@@ -143,6 +143,7 @@ class ChopBatchAggregate3d:
         
         with torch.no_grad():
             agg_pred = torch.div(self.accum_tensor, self.average_mask)
+            # agg_pred = torch.nan_to_num(agg_pred, nan=0, posinf=0, neginf=0)
             if 'cpu' not in self.device:  # clear accum tensors to save mem
                 del self.accum_tensor
                 self.accum_tensor = None

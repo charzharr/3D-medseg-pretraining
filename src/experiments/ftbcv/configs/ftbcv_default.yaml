@@ -58,7 +58,7 @@ train:
       dc_kw:
         do_bg: True
         batch_dice: True
-        smooth: 0.00001
+        smooth: 1
       ce_kw:
         weights_key: 'bcv'
     soft_dice_nnunet:

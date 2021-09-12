@@ -93,6 +93,11 @@ def get_data_components(cfg):
         headstart=True, 
         drop_last=True
     )
+    print(f'💠 OTMLoader created w/ {len(train_set)} train samples. \n'
+              f'   BatchSize={cfg.train.batch_size}, '
+              f'CropsPerVolume={cfg.train.examples_per_volume}, '
+              f'ShuffleSamples/Patches={shuffle}, '
+              f'NumWorkers={cfg.train.num_workers}.')
     
     return {
         'train_df': pretrain_df,
@@ -173,8 +178,9 @@ def patch_creator(sampset_return_dict):
     if cfg.train.train_byol:
         crop_pairs = cropper(volume_tensor, n_times=examples_per_sample)
     else:
-        crop_pairs = cropper(volume_tensor, patch_size, scale_range=(1.1, 1.4),
-                    min_overlap=0.1, n_times=examples_per_sample)
+        crop_pairs = cropper(volume_tensor, patch_size, min_overlap=0.2,
+                             scale_range=cfg.train.scale_range,
+                             n_times=examples_per_sample)
     
     examples = []
     for i, crop_pair in enumerate(crop_pairs):
@@ -275,6 +281,7 @@ class PreprocessSampleSet(SampleSet):
     def __init__(self, cfg, samples):
         self.cfg = cfg
         super().__init__(samples)
+        print(f'💠 PreprocessSampleSet created w/ {len(self.samples)} samples.')
     
     def __getitem__(self, idx):
         """
@@ -286,7 +293,7 @@ class PreprocessSampleSet(SampleSet):
         assert 0 <= idx < len(self), f'Index {idx} is out of bounds.'
         sample = self.samples[idx]
         sitk_image = sample.image.sitk_image  # loads path to sitk obj
-        print(f'[Took {time.time() - start:.2f}s to get sitk.] Raw: {sample.image.shape}')
+        # print(f'[Took {time.time() - start:.2f}s to get sitk.] Raw: {sample.image.shape}')
         
         record_dict = OrderedDict()
         
@@ -296,8 +303,15 @@ class PreprocessSampleSet(SampleSet):
         # record_dict['resample'] = {'interpolation': 'linear'}
         # print(f'[Took {time.time() - start:.2f}s to resample.]')
         
-        # 2. clamp + normalize
-        tensor = torch.tensor(sitk.GetArrayFromImage(sitk_image))
+        # Get Tensor
+        np_image = sitk.GetArrayFromImage(sitk_image)
+        if sample.dataset == 'kits':
+            np_image = np_image.T
+        tensor = torch.from_numpy(np_image)
+        record_dict['ReadImage'] = {'shape': tensor.shape}
+        assert tensor.shape[1:] == (512, 512), f'{tensor.shape}{sample.dataset}'
+        
+        # Clamp + normalize
         clamp_min, clamp_max = -1024, 325
         tensor = tensor.clamp(clamp_min, clamp_max).float()
         record_dict['Clamp'] = {'min': clamp_min, 'max': clamp_max}

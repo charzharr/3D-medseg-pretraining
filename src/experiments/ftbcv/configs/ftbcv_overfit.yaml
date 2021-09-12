@@ -2,7 +2,7 @@
 # ---- ##  Experiment Setup, Logging Specifications, Environment  ## ---- #
 experiment:
   description: 'Sanity check: test 0 loss and 100% dice on 2 batches'
-  id: "(0906bcv)OFIT2_dunet_s1"     # for wandb run identification
+  id: "(0910bcv)OFIT_nnunet_cedc_s1"     # for wandb run identification
   name: 'ftbcv'   # for experiment module identification
   project: '3DSeg-Pretrain'
 
@@ -14,7 +14,7 @@ experiment:
     break_train_iter: False                         # < Check
     break_test_iter: False                          # < Check
     test_every_n_epochs: 1
-  seed: 0
+  seed: 420
   hpsamp: ""
 
   checkpoint:
@@ -32,20 +32,22 @@ data:  # describing project-wide data specifications
 
 # Model / Criterion / Other nn.Module Specifications
 model:
-  name: 'denseunet3d' # 'genesis_unet3d'  # gn_unet3d
+  name: 'nnunet3d'  # 'denseunet3d'  # 'custom_denseunet3d' # 'genesis_unet3d'  # gn_unet3d
   init: 'kaiming'
   sync_bn: False
 
 # ---- ##  Training: iterations, criterion, optimization, etc.  ## ---- #
 
 train:
-  epochs: 50
-  batch_size: 3
-  examples_per_volume: 80
+  deep_sup: True
+
+  epochs: 1000
+  batch_size: 2
+  examples_per_volume: 28   # 250 iterations per epoch (nnUNet)
   num_workers: 0
 
-  patch_size: [64, 160, 160]
-  fg_bias: 0.666
+  patch_size: [48, 192, 192]
+  fg_bias: 0.5
   scale_range: 1.
 
   criterion:
@@ -54,12 +56,24 @@ train:
       dc_kw:
         do_bg: True
         batch_dice: True
-        smooth: 0.00001
+        smooth: 1
       ce_kw:
-        weights_key: 'bcv'
+        weights_key: '' # 'bcv'
+
+  optimizer:
+    name: 'nesterov'
+    lr: 0.01
+    nesterov:
+      momentum: 0.99
+
+  scheduler:
+    name: 'poly'
+    poly:
+      power: 0.9
+
 
 test:
-  batch_size: 4
+  batch_size: 3
 
 
 

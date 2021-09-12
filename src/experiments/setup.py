@@ -57,6 +57,16 @@ def get_scheduler(cfg, optimizer):
             optimizer,
             rampup_rates=rampup_rates
         )
+    elif 'poly' in sched:
+        sched_cfg = cfg.train.scheduler.poly
+        scheduler = schedulers.PolynomialDecay(
+            optimizer,
+            T,
+            t=t,
+            power=sched_cfg.power,
+            minlr=min_lr,
+            rampup_rates=rampup_rates
+        )
     elif 'exponential' in sched:
         sched_cfg = cfg.train.scheduler.exponential
         scheduler = schedulers.ExponentialDecay(

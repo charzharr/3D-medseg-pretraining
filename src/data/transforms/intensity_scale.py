@@ -46,7 +46,9 @@ class ScaleIntensity(Transform):
         """
         data = self._parse_data_input(data)
         if torch.rand((1,)).item() > self.p:
-            return data, None
+            if self.return_record:
+                return data, None
+            return data
         
         # Sample scale
         scale = self._parse_scale(scale) if scale else self.scale

@@ -225,7 +225,7 @@ class EpochMetrics(dict):
         string = str(pre)
         for k, v in self.items():
             if isinstance(v, numbers.Number) and float(v).is_integer():
-                v_string = f'{v:d}'
+                v_string = f'{int(v):d}'
             elif isinstance(v, float):
                 v_string = f'{v:.4f}'
             elif isinstance(v, collections.Sequence):

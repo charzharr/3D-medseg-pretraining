@@ -86,7 +86,7 @@ def run_cli(config, distributed):
 
     if cfg.experiment.name == 'ftbcv':
         exp_args.append(torch.multiprocessing.Queue())
-    
+
     # *RUN*
     try:
         if cfg.experiment.distributed:
@@ -98,17 +98,24 @@ def run_cli(config, distributed):
                 nprocs=len(gpu_indices))
         else:
             experiment_main.run(0, cfg, *exp_args)  # rank 0 (N/A to run mode)
-    except KeyboardInterrupt:
-        import psutil
-
-        print('\n\n' + '*' * 80 + '\n[ Ctrl+C Detected ]\n')
-        print(f'Exiting! Kill the kids!')
-        child_processes = psutil.Process().children(recursive=True)
-        for child in child_processes:
-            print(f'Killing child process (PID={child.pid})')
-            child.kill()
+    except (KeyboardInterrupt, RuntimeError) as e:
+        print('\n\n' + '*' * 80 + '\n[ Program Exit Initiated ]\n')
+        print(f'Exception thrown:\n', '-' * 30, f'\n{e}', sep='')
+        print(f'\nTraceback:\n', '-' * 30, sep='')
+        import traceback
+        traceback.print_exc()
+        kill_children()
         if cfg.experiment.distributed:
             torch.distributed.destroy_process_group()
+
+
+def kill_children():
+    print(f'Kill the kids!')
+    import psutil
+    child_processes = psutil.Process().children(recursive=True)
+    for child in child_processes:
+        print(f'Killing child process (PID={child.pid})')
+        child.kill()
 
 
 def parse_cfg(cfg):
@@ -120,25 +127,37 @@ def parse_cfg(cfg):
 
     # Adjust batch sizes based on models
     N_gpus = len(cfg.experiment.gpu_idxs)
-    if N_gpus > 0:
+    """
+    if N_gpus > 0 and cfg.experiment.name == 'ftbcv':
         changed = False
-        if 'dense' in cfg.model.name:
+        if 'custom_dense' in cfg.model.name:
             tr_batch = cfg.train.batch_size
-            te_batch = cfg.test.batch_size
+            cfg.train.batch_size = 4
+            if 'test' in cfg:
+                te_batch = cfg.test.batch_size
+                cfg.test.batch_size = 4
+            changed = True
+        elif 'dense' in cfg.model.name:
+            tr_batch = cfg.train.batch_size
             cfg.train.batch_size = 3
-            cfg.test.batch_size = 4
+            if 'test' in cfg:
+                te_batch = cfg.test.batch_size
+                cfg.test.batch_size = 4
             changed = True
         elif 'unet' in cfg.model.name:
             tr_batch = cfg.train.batch_size
-            te_batch = cfg.test.batch_size
             cfg.train.batch_size = 2
-            cfg.test.batch_size = 3
+            if 'test' in cfg:
+                te_batch = cfg.test.batch_size
+                cfg.test.batch_size = 3
             changed = True
 
         if changed:  # print changes
             print(f' Adjusting batch sizes based on model used:')
             print(f'  Train Batch: {tr_batch} -> {cfg.train.batch_size}')
-            print(f'  Test Batch: {te_batch} -> {cfg.test.batch_size}')
+            if 'test' in cfg:
+                print(f'  Test Batch: {te_batch} -> {cfg.test.batch_size}')
+    """
 
     # Adjust multi-gpu parameters
     if not cfg.experiment.distributed and N_gpus > 1:
@@ -162,17 +181,17 @@ def parse_cfg(cfg):
             print(f'  # Workers: {orig_workers} -> {cfg.train.num_workers}')
 
         # LR adjustment
-        old_lr = cfg.train.optimizer.lr
-        print(f'  LR: {old_lr} -> {N_gpus * old_lr}')
-        cfg.train.optimizer.lr = old_lr * N_gpus
+        # old_lr = cfg.train.optimizer.lr
+        # print(f'  LR: {old_lr} -> {N_gpus * old_lr}')
+        # cfg.train.optimizer.lr = old_lr * N_gpus
 
     # Adjust cfg if overfit minibatch
-    if cfg.experiment.debug.overfitbatch:
-        print(f'🚨 Overfitting a set of minibatches!')
-        print(f'    Start-Epoch: {cfg.train.start_epoch} -> {0}')
-        print(f'    Train-Epochs: {cfg.train.epochs} -> {50}')
-        cfg.train.start_epoch = 0
-        cfg.train.epochs = 50
+    # if cfg.experiment.debug.overfitbatch:
+    #     print(f'🚨 Overfitting a set of minibatches!')
+    #     print(f'    Start-Epoch: {cfg.train.start_epoch} -> {0}')
+    #     print(f'    Train-Epochs: {cfg.train.epochs} -> {40}')
+    #     cfg.train.start_epoch = 0
+    #     cfg.train.epochs = 40
 
 
 def set_seed(seed):
@@ -186,7 +205,6 @@ def set_seed(seed):
 
 
 def setup_dist(rank, world_size):
-    # Kill any lingering processing from previous runs
     torch.distributed.init_process_group(
         'nccl',
         init_method='env://',

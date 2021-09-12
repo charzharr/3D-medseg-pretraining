@@ -13,6 +13,9 @@ Inference Notes
     - After fp16 final change:
         1GPU: 3.1 min
         2GPU: 2.08 min
+
+DDP Training Notes
+    - ~1.5 seconds to train, ~2-4 seconds for batch metrics!! WTF
 """
 
 import sys, os
@@ -30,6 +33,7 @@ import collections
 from collections import namedtuple
 
 import torch, torchvision
+import torch.nn.functional as F
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader
 import SimpleITK as sitk
@@ -43,6 +47,7 @@ from lib.utils.io import output
 from lib.assess.seg_metrics import batch_cdj_metrics
 from lib.nets import init as init_net
 from data.transforms.crops.inference import ChopBatchAggregate3d as CBA
+from data.transforms.resize import resize_segmentation3d
 
 WATCH = timers.StopWatch()
 
@@ -61,6 +66,7 @@ SUMMARIZE = {
 CM = namedtuple('CM', ('tp', 'fp', 'fn', 'tn'))
 
 
+
 def run(rank, cfg, inference_metrics_queue):
     # Experiment environment setup
     from run import set_seed, setup_dist
@@ -73,6 +79,7 @@ def run(rank, cfg, inference_metrics_queue):
         cfg.experiment.worldsize = worldsize
         setup_dist(rank, worldsize)
         cfg.__dict__ = cfg
+        inference_metrics_queue = torch.multiprocessing.Queue()  # replace
 
     # ------------------ ##  Experiment Setup  ## ------------------ #
     if rank == 0:
@@ -128,6 +135,7 @@ def run(rank, cfg, inference_metrics_queue):
         print(f'  * Rank {rank} using device {device} via nn.DDP.')
         if cfg.model.sync_bn:
             model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
+            print(f'  * Rank {rank} device using SyncBatchNorm.')
     
     
     if rank == 0:
@@ -144,7 +152,9 @@ def run(rank, cfg, inference_metrics_queue):
         weight = None if not wt_key else data_setup.weights_d[wt_key]
         ce_kw = {'weight': weight}
         dc_kw = cfg.train.criterion.dice_ce_nnunet.dc_kw
-        criterion = DC_and_CE_loss(dc_kw, ce_kw, ignore_label=None).to(device)
+        criterion = DC_and_CE_loss(dc_kw, ce_kw, ignore_label=None,
+                                   weight_dice=0.5, weight_ce=0.5)
+        criterion = criterion.to(device)
     
     optimizer = setup.get_optimizer(cfg, model.parameters())
     scheduler = setup.get_scheduler(cfg, optimizer)
@@ -163,6 +173,7 @@ def run(rank, cfg, inference_metrics_queue):
     test_set = data_d['test_set']
     
     # ------------------ ##  Training Action  ## ------------------ #
+    synchronize()
     if rank == 0:
         output.header_one('II. Training')
     
@@ -183,6 +194,7 @@ def run(rank, cfg, inference_metrics_queue):
         train_loader = list(itertools.islice(itertools.cycle(batches), 50))
         val_set._samples = [val_set.samples[0]]
     
+
     tot_epochs = cfg['train']['epochs'] - cfg['train']['start_epoch']
     global_iter = 0
     for epoch in range(cfg['train']['start_epoch'], cfg['train']['epochs']):
@@ -196,35 +208,60 @@ def run(rank, cfg, inference_metrics_queue):
         WATCH.tic('iter')
 
         for it, batch in enumerate(train_loader):
-
             samples = batch['samples']
             records = batch['records']
             
             X = batch['images'].float().to(device, non_blocking=True)
-            Y_id = batch['masks'].long().to(device, non_blocking=True)
+            Y_id = batch['masks'].to(torch.uint8).to(device, non_blocking=True)
 
             out_d = model(X)
             out = out_d['out']
             loss_d = criterion(out, Y_id)
             loss = loss_d['loss']
+
+            if cfg.train.deep_sup:
+                num_classes = samples[0].mask.num_classes
+                weights, losses = [1], [loss]
+                for resolution in (2, 4, 8):
+                    weights.append(1/resolution)
+                    logits = out_d[f'{str(resolution)}x']
+
+                    size = [s // resolution for s in Y_id.shape[2:]]
+                    size[0] *= 2
+                    targs = torch.zeros(list(Y_id.shape[:2]) + size)
+                    for b in range(Y_id.shape[0]):
+                        targs[b][0] = resize_segmentation3d(
+                                        Y_id[b][0], size, 
+                                        class_ids=list(range(1, num_classes)))
+                        # save_image(targs[b][0], f'it{it}_res{resolution}_mask{b}', 
+                        #             samples[b], history=records[b], is_mask=True)
+                    losses.append(criterion(logits, targs.to(device))['loss'])
+                weights = [w/sum(weights) for w in weights]
+                # print(weights)
+                # print(losses)
+                loss = sum([w * l for w, l in zip(weights, losses)])
             
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
 
-            # Iteration & Epoch Training Metrics
-            targs = Y = batch['masks_1h']
-            pred_ids = out.detach().argmax(1).unsqueeze(1).cpu()
-            preds = torch.zeros(Y.shape, dtype=torch.uint8)
-            preds.scatter_(1, pred_ids, 1)
-
-            iter_metrics_d = batch_metrics(preds, targs, 
-                                           ignore_background=False)
-            iter_metrics_d['loss'] = loss.item()
-
-            iter_time = WATCH.toc('iter', disp=False)
-            loss_str = criterion.get_loss_string(loss_d)
+            # Iteration & Epoch Training Metrics 
             if rank == 0:
+                targs = batch['masks_1h'].to(torch.uint8)
+                with torch.no_grad():
+                    pred_ids = out.argmax(1).unsqueeze(1)
+                    del out; del out_d
+                    preds = torch.zeros(targs.shape, dtype=torch.uint8,
+                                        device=device)
+                    preds.scatter_(1, pred_ids, 1)
+                    preds = preds.cpu()
+            
+                iter_metrics_d = batch_metrics(preds, targs, 
+                                           ignore_background=False)
+                iter_metrics_d['loss'] = loss.item()
+
+                iter_time = WATCH.toc('iter', disp=False)
+                loss_str = criterion.get_loss_string(loss_d)
                 print(
                     f"\n    Iter {it+1}/{len(train_loader)} "
                     f"({iter_time:.1f} sec, {mem():.1f} GB) - "
@@ -234,17 +271,42 @@ def run(rank, cfg, inference_metrics_queue):
                     f"       {iter_metrics_d['dice_class']}"
                 )
 
-            update_mets = ['loss', 'dice_mean', 'jaccard_mean']
-            epmeter.update({k: iter_metrics_d[k] for k in update_mets})
-            
+                update_mets = ['loss', 'dice_mean', 'jaccard_mean']
+                epmeter.update({k: iter_metrics_d[k] for k in update_mets})
+
+            # Save images, masks, and predictions
+            if rank == 0 and cfg.experiment.debug.overfitbatch and it == 0:
+                from data.transforms.z_normalize import ZNormalize
+                for i in range(X.shape[0]):
+                    img = ZNormalize().invert(X[i][0], records[i]['ZNormalize'])
+                    img = img.detach().cpu().numpy().astype(np.int16)
+                    mask = Y_id[i][0].detach().cpu().numpy().astype(np.uint8)
+                    pred = pred_ids[i][0].detach().cpu().numpy().astype(np.uint8)
+
+                    sim = samples[i].image.sitk_image
+                    print(samples[i].image)
+                    print(samples[i].mask)
+                    print(records[i]['ScaledForegroundCropper3d'])
+
+                    scrop = sitk.GetImageFromArray(img)
+                    scrop.SetSpacing(sim.GetSpacing())
+                    sitk.WriteImage(scrop, f'ofit_crop{i + 1}.nii.gz')
+
+                    smask = sitk.GetImageFromArray(mask)
+                    smask.SetSpacing(sim.GetSpacing())
+                    sitk.WriteImage(smask, f'ofit_targ{i + 1}.nii.gz')
+                    
+                    spred = sitk.GetImageFromArray(pred)
+                    spred.SetSpacing(sim.GetSpacing())
+                    sitk.WriteImage(spred, f'ofit_pred{i + 1}.nii.gz')
+
             global_iter += 1
             WATCH.tic('iter')
-            if debug['break_train_iter'] and it >= 2: 
+            if debug['break_train_iter'] and it >= 12: 
                 break
 
-        del X  # save some memory for inference
-        del Y_id
-        del out
+        out = None; out_d = None  # save mem for inference
+        del X; del Y_id; del loss  
 
         # -- Epoch Values -- #
         epoch_mets = statistics.EpochMetrics()
@@ -268,6 +330,9 @@ def run(rank, cfg, inference_metrics_queue):
             # output.subsubsection('Testing Metrics')
             # test_mets = test_metrics(cfg, model, test_set, epoch, name='test')
             # update_epoch_mets(test_mets, tracked_epmets, 'test_ep_')
+        
+        scheduler.step(epoch=epoch, value=0)
+
         if rank == 0:
             epoch_mets.print(pre="\nEpoch Stats\n-----------\n")
 
@@ -281,9 +346,8 @@ def run(rank, cfg, inference_metrics_queue):
             if debug['save'] and epoch >= SAVE_AFTER * tot_epochs:
                 save_model(cfg, model.state_dict(), tracker, epoch, source_code)
         
-        scheduler.step(epoch=epoch, value=0)
-        WATCH.toc(name='epoch')
-        # End of epoch #
+            WATCH.toc(name='epoch')
+        # --  End of epoch -- #
 
 
 def get_model(cfg):
@@ -292,9 +356,31 @@ def get_model(cfg):
     percs = 1 / weights
     approx_logits = torch.log(percs)
 
-    if cfg.model.name == 'denseunet3d':
+
+    if cfg.model.name == 'nnunet3d':
+        from experiments.ftbcv.nnunet3d import UNet3D
+        model = UNet3D(n_input=1, n_class=14, deep_sup=cfg.train.deep_sup)
+        with torch.no_grad():
+            model.final_1x.bias = torch.nn.Parameter(approx_logits.clone())
+            if cfg.train.deep_sup:
+                model.final_2x.bias = torch.nn.Parameter(approx_logits.clone())
+                model.final_4x.bias = torch.nn.Parameter(approx_logits.clone())
+                model.final_8x.bias = torch.nn.Parameter(approx_logits.clone())
+    elif cfg.model.name == 'dod_unet3d':
+        from experiments.ftbcv.dod_unet3d import UNet3D 
+        model = UNet3D(num_classes=14)
+        with torch.no_grad():
+            final_biases = torch.nn.Parameter(approx_logits)
+            model.final_conv.conv1.bias = final_biases
+    elif cfg.model.name == 'custom_denseunet3d':
+        from lib.nets.volumetric.custom_denseunet3d import DenseUNet
+        model = DenseUNet(name='201', out_channels=14, deconv=True)
+        with torch.no_grad():
+            final_biases = torch.nn.Parameter(approx_logits)
+            model.final_conv.bias = final_biases
+    elif cfg.model.name == 'denseunet3d':
         from lib.nets.volumetric.denseunet3d import get_model as get_dunet
-        model = get_dunet(201, num_classes=14, deconv=False)
+        model = get_dunet(169, num_classes=14, deconv=False)
         with torch.no_grad():
             final_biases = torch.nn.Parameter(approx_logits)
             model.conv2.bias = final_biases
@@ -305,7 +391,7 @@ def get_model(cfg):
             final_biases = torch.nn.Parameter(approx_logits)
             model.segm.conv_final.bias = final_biases
     elif cfg.model.name == 'genesis_unet3d':
-        from .ftbcv_unet3d import UNet3D as genesis_unet3d
+        from experiments.ftbcv.ftbcv_unet3d import UNet3D as genesis_unet3d
         model = genesis_unet3d(n_input=1, n_class=14, act='relu')
     elif cfg.model.name == 'gn_unet3d':
         from lib.nets.volumetric.resunet3d import UNet3D
@@ -332,13 +418,12 @@ def get_model(cfg):
             state_dict = checkpoint_d['state_dict']
             print(model.load_state_dict(state_dict))
     else: 
+        # Initialize
+        init_type = cfg.model.init
+        if init_type:
+            init_net.init_weights(model, init_type=init_type)
+        print(f'   (Model) Successfully initialized weights via {init_type}.')
         if cfg.model.name == 'genesis_unet3d':
-            # Initialize
-            init_type = cfg.model.init
-            if init_type:
-                init_net.init_weights(model, init_type=init_type)
-            print(f'   (Model) Successfully initialized weights via {init_type}.')
-
             # Final layer init
             with torch.no_grad():
                 final_biases = torch.nn.Parameter(approx_logits)
@@ -351,15 +436,20 @@ def get_model(cfg):
     }
 
 
-def batch_metrics(preds, targs, ignore_background=False, naive_avg=False):
+def batch_metrics(preds, targs, ignore_background=True, naive_avg=False):
     """
     preds: BxCxDxHxW, targs: BxCxDxHxW
     Accum: https://github.com/Project-MONAI/MONAI/blob/67aa4cfba3a7e32786f22c5767bf6772c2a393d9/monai/metrics/utils.py#L108
     """
+    def mean_with_nans(array):
+        num_nans = np.count_nonzero(np.isnan(array))
+        array = np.nan_to_num(array, nan=0)
+        return array.sum() / (array.size - num_nans)
+
     cdj_tuple = batch_cdj_metrics(preds, targs,
                                   ignore_background=ignore_background)
 
-    nt_conf = cdj_tuple.confusion  # named_tuple: tp, fp, tn, fn
+    nt_conf = cdj_tuple.confusion  # named_tuple: 'tp', 'fp', 'fn', 'tn'
     nt_conf = CM(np.array(nt_conf.tp), np.array(nt_conf.fp), 
                  np.array(nt_conf.fn), np.array(nt_conf.tn))
 
@@ -371,46 +461,56 @@ def batch_metrics(preds, targs, ignore_background=False, naive_avg=False):
         if naive_avg:
             dice_class = ec_dice.mean(0)  # shape=(C,)
             dice_batch = ec_dice.mean(1)
-            dice_mean = dice_batch.mean()
+            dice_batch_mean = dice_batch.mean()
             jaccard_class = ec_jaccard.mean(0)
             jaccard_batch = ec_jaccard.mean(1)
-            jaccard_mean = jaccard_batch.mean()
+            jaccard_batch_mean = jaccard_batch.mean()
         else:
             dice_class = ec_dice.sum(0) / ec_exists.sum(0)
             dice_batch = ec_dice.sum(1) / ec_exists.sum(1)
             jaccard_class = ec_jaccard.sum(0) / ec_exists.sum(0)
             jaccard_batch = ec_jaccard.sum(1) / ec_exists.sum(1)
             
-            for a in (dice_class, dice_batch, jaccard_class, jaccard_batch):
-                a[a == np.inf] = np.nan
-            batch_exist_count = np.sum(~np.isnan(dice_batch))
-            dice_mean = dice_batch.sum() / batch_exist_count
-            dice_mean = np.nan if dice_mean == np.inf else dice_mean
-            jaccard_mean = jaccard_batch.sum() / batch_exist_count
-            jaccard_mean = np.nan if jaccard_mean == np.inf else jaccard_mean
+            dice_batch_mean = dice_batch.mean()
+            jaccard_batch_mean = jaccard_batch.mean()
+            # for a in (dice_class, dice_batch, jaccard_class, jaccard_batch):
+            #     a[a == np.inf] = np.nan
+            # batch_exist_count = np.sum(~np.isnan(dice_batch))
+            # dice_mean = dice_batch.sum() / batch_exist_count
+            # dice_mean = np.nan if dice_mean == np.inf else dice_mean
+            # jaccard_mean = jaccard_batch.sum() / batch_exist_count
+            # jaccard_mean = np.nan if jaccard_mean == np.inf else jaccard_mean
+
+        ctp, cfp, cfn = nt_conf.tp.sum(0), nt_conf.fp.sum(0), nt_conf.fn.sum(0)
+        batch_mean = mean_with_nans(2 * ctp / (2 * ctp + cfp + cfn))
+        jaccard_mean = mean_with_nans(ctp / (ctp + cfp + cfn))
 
     return {
         'confusion_all': nt_conf,  # named tuple
         'dice_all': ec_dice,
         'dice_class': dice_class,  # shape=(C,)
         'dice_batch': dice_batch,  # shape=(B,)
-        'dice_mean': dice_mean,
+        'dice_batch_mean': dice_batch_mean,
+        'dice_mean': batch_mean,
         'jaccard_all': ec_jaccard,
         'jaccard_class': jaccard_class,  # shape=(C,)
         'jaccard_batch': jaccard_batch,  # shape=(B,)
-        'jaccard_mean': jaccard_mean,
+        'jaccard_batch_mean': jaccard_batch_mean,
+        'jaccard_mean': jaccard_mean
     }
 
 
 def test_metrics(cfg, model, dataset, epoch, test_metrics_queue, 
-                 num_examples, name='test'):
+                 num_examples, name='test', overlap_perc=0.2):
     """
     Args:
         num_examples: needed for DDP since rank 0 worker needs a total count
             of examples so it knows how many times to pull metrics from Q.
     """
+    device = cfg.experiment.device
     if cfg.experiment.distributed:
         cba_device = cfg.experiment.device
+        torch.cuda.set_device(cfg.experiment.rank)
     else:
         cba_device = 'cuda' if torch.cuda.is_available() else 'cpu'
         if len(cfg.experiment.gpu_idxs) > 1:
@@ -422,7 +522,7 @@ def test_metrics(cfg, model, dataset, epoch, test_metrics_queue,
         model.eval()
 
         WATCH.tic(f'{name}_iter')
-        processes = []
+        samples, processes = [], []
         for i in range(len(dataset)):
             if cfg.experiment.rank == 0:
                 print(f' 🖼️  Inference for example {i+1}.')
@@ -432,10 +532,13 @@ def test_metrics(cfg, model, dataset, epoch, test_metrics_queue,
             image = example_d['tensor']
             mask = example_d['mask_1h']  #  image: float32, mask: uint8
 
+            samples.append(sample)
+
             # Create Chop-Batch-Aggregate inference helper
             test_batch_size = cfg.test.batch_size
             num_classes = sample.mask.num_classes
-            cba = CBA(image, cfg.train.patch_size, (0, 0, 0), 
+            overlap = [int(overlap_perc * s) for s in cfg.train.patch_size]
+            cba = CBA(image, cfg.train.patch_size, overlap, 
                       test_batch_size, num_classes, device=cba_device)
             if cfg.experiment.rank == 0:
                 print(f'     Getting predictions for {len(cba)} batches.')
@@ -450,8 +553,7 @@ def test_metrics(cfg, model, dataset, epoch, test_metrics_queue,
 
             # Get final predictions, calculate metrics
             # pstart = time.time()
-            del crops
-            del logits
+            del crops; del logits
             agg_predictions = cba.aggregate(ret='1_hot', cpu=True, numpy=False)
             # print(f'Agg {time.time() - pstart:.2f} sec')
             
@@ -468,7 +570,7 @@ def test_metrics(cfg, model, dataset, epoch, test_metrics_queue,
             WATCH.tic(f'{name}_iter')
 
     # While last volume's metrics is computing, save sample
-    if cfg.experiment.rank == 0 and epoch % 10 == 1:  # saves the last volume in set  
+    if cfg.experiment.rank == 0 and epoch % 10 == 1:  # saves last volume in set  
         id_preds = agg_predictions.argmax(0).numpy().astype(np.uint16)
         sitk_pred = sitk.GetImageFromArray(id_preds, isVector=False)
         sitk_pred.SetOrigin(sample.mask.origin)
@@ -482,25 +584,50 @@ def test_metrics(cfg, model, dataset, epoch, test_metrics_queue,
         print(f'Saving prediction as "{filename}" | Success.')
         sitk.WriteImage(sitk_pred, save_path)
 
-    # Accumulate metrics & print results    
-    if cfg.experiment.rank == 0:
-        update_mets = ['dice_mean', 'jaccard_mean']
-        data_cfg = cfg.data[cfg.data.name]
-        if not cfg.experiment.distributed:
-            num_examples = len(processes)
-        for i in range(num_examples):
-            mets = test_metrics_queue.get()
-            epmeter.update({k: mets[k] for k in update_mets})
-            print(f'({name.title()}) Example {i+1} \n'
+    # Accumulate metrics & print results
+    metric_results = []
+    update_mets = ['dice_mean', 'jaccard_mean']
+    data_cfg = cfg.data[cfg.data.name]
+    for i in range(len(dataset)):
+        mets = test_metrics_queue.get()
+        metric_results.append(mets)
+        # print(f'Rank {cfg.experiment.rank} Res{i+1} {mets["dice_mean"]}')
+
+    for process in processes:
+        process.join()
+
+    for i, mets in enumerate(metric_results):
+        samp_id, samp_idx = samples[i].id, samples[i].index
+        epmeter.update({k: mets[k] for k in update_mets})
+        if cfg.experiment.rank == 0:
+            print(f'({name.title()}) Sample {samp_id}, idx={samp_idx} \n'
                   f'       Dice: {float(mets["dice_mean"]):.2f} \n'
                   f'        {mets["dice_class"]} \n'
                   f'       Jaccard: {float(mets["jaccard_mean"]):.2f} \n'
-                  f'        {mets["jaccard_class"]}')
-    for process in processes:
-        process.join() 
-    
-    if cfg.experiment.rank == 0:
-        WATCH.toc(name.title(), disp=True)
+                  f'        {mets["jaccard_class"]}') 
+
+    if cfg.experiment.distributed:
+        torch.cuda.empty_cache()
+        sum_dice = sum([d['dice_mean'] for d in metric_results])
+        sum_jaccard = sum([d['jaccard_mean'] for d in metric_results])
+        tensor = torch.tensor([sum_dice, sum_jaccard]).float().cuda()
+        
+        torch.distributed.all_reduce(tensor)
+        if cfg.experiment.rank == 0:
+            dice_mean = tensor[0].item() / num_examples
+            jaccard_mean = tensor[1].item() / num_examples
+            print(f'⭐ {name.title()} DDP Results for {num_examples} images: \n'
+                  f'       Avg Dice: {dice_mean:.2f} \n'
+                  f'       Avg Jaccard: {jaccard_mean:.2f} \n')
+
+            WATCH.toc(name.title(), disp=True)
+            return {
+                'dice_mean': dice_mean,
+                'jaccard_mean': jaccard_mean
+            }
+        return
+
+    WATCH.toc(name.title(), disp=True)
     return epmeter.avg()
 
 
@@ -571,6 +698,48 @@ def mem():
     prim_card_num = gpu_indices[0]
     return mem_map[prim_card_num]/1000
 
+
+def synchronize():
+    """
+    Helper function to synchronize between multiple processes when
+    using distributed training
+    """
+    if not torch.distributed.is_initialized():
+        return
+    world_size = torch.distributed.get_world_size()
+    rank = torch.distributed.get_rank()
+    if world_size == 1:
+        return
+    torch.distributed.barrier()
+
+
+def save_image(data, name, sample, history=None, is_mask=False):
+    if is_mask:
+        if data.ndim == 4 and data.shape[0] == 1:
+            data = data.squeeze(0)
+        elif data.ndim == 4 and data.shape[0] > 1:
+            data = data.argmax(0)
+        assert data.ndim == 3
+        if isinstance(data, torch.Tensor):
+            data = data.detach().cpu().numpy()
+        data = data.astype(np.uint8)
+    else:
+        assert data.ndim == 3
+        if history:
+            from data.transforms.z_normalize import ZNormlize
+            data = ZNormalize().invert(data, history['ZNormalize'])
+        if isinstance(data, torch.Tensor):
+            data = data.detach().cpu().numpy()
+        data = data.astype(np.int16)
+
+    sitk_crop = sitk.GetImageFromArray(data)
+    sitk_crop.SetOrigin(sample.image.origin)
+    sitk_crop.SetDirection(sample.image.direction)
+    sitk_crop.SetSpacing(sample.image.spacing)
+
+    if len(name) <= 7 or name[-7:] != '.nii.gz':
+        name = name + '.nii.gz'
+    sitk.WriteImage(sitk_crop, name)
 
 
 

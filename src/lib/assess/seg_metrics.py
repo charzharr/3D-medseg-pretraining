@@ -114,16 +114,16 @@ def batch_cdj_metrics(pred, targ, ignore_background=True):
     tp = CM.tp  # BxC
     fp = CM.fp
     fn = CM.fn
-    exists = to_float((tp + fn) > 0)  # if b, c has item, then =1
+    exists = to_float((tp + fn) > 0)  # if b, c has item, then 1
     
     # Get Dice & Jaccard
-    dice = (2 * tp) / (2 * tp + fp + fn)  # BxC
-    dice = nan_to_num(dice, nan=0)
+    dice = (2 * tp) / (2 * tp + fp + fn + 1e-8)  # BxC
+    # dice = nan_to_num(dice, nan=0)
     # dice_sanity = batch_dice(pred, targ)
     # assert allclose(dice, dice_sanity)
 
-    jaccard = tp / (tp + fp + fn)  # BxC
-    jaccard = nan_to_num(jaccard, nan=0)
+    jaccard = tp / (tp + fp + fn + 1e-8)  # BxC
+    # jaccard = nan_to_num(jaccard, nan=0)
     # jaccard_sanity = batch_jaccard(pred, targ)
     # assert allclose(jaccard, jaccard_sanity)
 

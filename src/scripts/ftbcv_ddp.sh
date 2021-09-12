@@ -9,12 +9,12 @@
 #$ -pe smp 4             
 #$ -q long          
 
-#$ -q gpu@@csecri-p100   # gpu@@csecri-p100, gpu@@csecri-titanxp 
-#$ -l gpu_card=2
+#$ -q gpu@@csecri-titanxp  # gpu@@csecri-p100, gpu@@csecri-titanxp 
+#$ -l gpu_card=3
 
 
 export PROJ_PATH="/afs/crc.nd.edu/user/y/yzhang46/_3DPRE"
-export RUN_CFG="./experiments/ftbcv/configs/bcv_base.yaml"
+export RUN_CFG="./experiments/ftbcv/configs/ftbcv_train.yaml"
 export RUN_CHECKPOINT=""
 
 
@@ -23,8 +23,8 @@ if [ "$USER" == "yzhang46" ]; then
         # Env and Requirements Setup
         cd $PROJ_PATH
 
-        module load pytorch
         module load python 
+        module load cuda/10.2
         
 
         # echo -e "\n>>> Installing Python requirements\n"
@@ -43,6 +43,8 @@ else
 
 fi
 
+
+export NCCL_IB_DISABLE=1
 
 # CUDA_VISIBLE_DEVICES=0,1,2,3
 export CUDA_VISIBLE_DEVICES="${SGE_HGR_gpu_card// /,}"

@@ -45,7 +45,9 @@ class GaussianBlur(Transform):
     def apply_transform(self, data, spacing=None, sigma=None):
         data = self._parse_data_input(data)
         if torch.rand((1,)).item() > self.p:
-            return data, None
+            if self.return_record:
+                return data, None
+            return data
         
         # Sample sigma and spacing for each image dim
         if sigma is not None:

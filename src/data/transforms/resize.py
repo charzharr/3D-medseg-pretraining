@@ -4,11 +4,13 @@ Tips of implementations from MONAI:
 https://github.com/Project-MONAI/MONAI/blob/dev/monai/transforms/spatial/array.py
 """
 
+import warnings
 import numbers
 import collections
 
 import numpy as np
 import torch
+from skimage.transform import resize
 
 from lib.utils.parse import parse_probability, parse_bool
 from data.transforms.transform_base import Transform
@@ -40,7 +42,9 @@ class Resize3d(Transform):
     def apply_transform(self, data, size=None, interpolation=None):
         data = self._parse_data_input(data)
         if torch.rand((1,)).item() > self.p:
-            return data, None
+            if self.return_record:
+                return data, None
+            return data
         
         # Get transform parameters
         if size is not None:
@@ -68,7 +72,7 @@ class Resize3d(Transform):
             is_mask = False if is_image else 'mask' in k
             if is_image or is_mask:
                 image = v
-                interp_mode = interpolation if is_image else 'nearest'
+                interp_mode = interpolation if is_image else 'segmask'
                 t_image = Resize3d.resize(image, size, interp_mode)
                 
                 if tuple(t_image.shape) != tuple(size):
@@ -112,6 +116,9 @@ class Resize3d(Transform):
         if size == image.shape[-3:]:
             return image
 
+        if interpolation == 'segmask':
+            return resize_segmentation3d(image, size[-3:])
+
         shape = image.shape
         if image.ndim == 4:
             msg = ('If you give Resize3D a 4 dim tensor, then dim 1 must be '
@@ -150,3 +157,57 @@ class Resize3d(Transform):
         else:
             msg = '"size" must be a number or a sequence of 3 nums.'
             raise ValueError(msg)
+
+
+def resize_segmentation3d(mask, new_shape, class_ids=[]):
+    """ ~40 seconds for a BCV volume
+    1. Uses one-hot version of mask to resizing with linear interpolation
+        per channel to avoid artifacts.
+    2. Threshold each channel @ 0.5 to a clean one-hot
+    3. Convert back to the format the input was in.
+
+    Scikit Orders from 0 to 5:
+        0: Nearest-neighbor
+        1: Bi-linear (default)
+        2: Bi-quadratic
+        3: Bi-cubic
+        4: Bi-quartic
+        5: Bi-quintic
+
+    Args:
+        mask (array or tensor): one-hot or ID mask
+        new_shape (tuple DxHxW): new shape of mask
+    """
+    assert len(new_shape) == 3, '"new_shape" must be a DxHxW tuple.'
+    order = 1   # linear
+
+    is_tensor = isinstance(mask, torch.Tensor)
+    if is_tensor:
+        mask_arr = mask.detach().cpu().numpy()
+    else:
+        mask_arr = mask 
+
+    if mask_arr.ndim == 3:  # convert to 1 hot
+        unique_labels = np.unique(mask_arr) if not class_ids else class_ids
+        final_mask = np.zeros(new_shape, dtype=mask_arr.dtype)
+        for i, val in enumerate(unique_labels):
+            channel_mask = mask_arr == val
+            resized_channel = resize(channel_mask.astype(np.float32),
+                                     new_shape, order, mode='edge',
+                                     clip=True, anti_aliasing=False)
+            final_mask[resized_channel >= 0.5] = val
+    else:  # resize each channel of one-hot mask
+        assert mask_arr.ndim == 4
+        final_mask = np.zeros([mask_arr.shape[0]] + list(new_shape), 
+                              dtype=mask_arr.dtype)
+        for i in range(mask_arr.shape[0]):
+            channel_mask = mask_arr[i]
+            resized_channel = resize(channel_mask.astype(np.float32),
+                                     new_shape, order, mode='edge',
+                                     clip=True, anti_aliasing=False)
+            final_mask[resized_channel >= 0.5] = 1
+
+    if is_tensor:
+        return torch.from_numpy(final_mask)
+
+    return final_mask

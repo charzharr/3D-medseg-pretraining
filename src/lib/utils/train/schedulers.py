@@ -23,6 +23,36 @@ class BaseScheduler(ABC):
         return next(iter(self.optimizer.param_groups))['lr']
 
 
+class PolynomialDecay(BaseScheduler):
+    """ "PolyLR" scheduler proposed in DeepLab. 
+        lr_t = lr_0 * (1 - t / T) ** power 
+    """
+    def __init__(self, optimizer, T, t=0, power=0.9, rampup_rates=[],
+                 minlr=1e-8):
+        self.T = T
+        self.power = power
+        self.minlr = minlr
+        self.optimizer = optimizer
+        self.lr = self.orig_lr = self.get_lr()
+        
+        self.rampup_rates = rampup_rates
+        self.step(epoch=t)   # in-case we start from epoch > 1
+
+        print(f'💠 PolyLR scheduler initiated with lr={self.lr} \n'
+              f'   t={t}, T={T}, power={power} \n'
+              f'   minlr={minlr}, rampup_rates={rampup_rates}.')
+
+    def step(self, epoch=None, **kws):
+        assert epoch is not None, "Need to give epoch."
+        
+        if self.rampup_rates:
+            self.set_lr(self.rampup_rates.pop(0))
+        else:
+            new_lr = self.orig_lr * (1 - epoch / self.T) ** self.power
+            new_lr = max(self.minlr, new_lr)
+            self.set_lr(new_lr)
+
+
 class Uniform(BaseScheduler):
     """ Keeps uniform learning rate throughout. """
     def __init__(self, optimizer, rampup_rates=[]):

@@ -35,7 +35,9 @@ class Gamma(Transform):
         """
         data = self._parse_data_input(data)
         if torch.rand((1,)).item() > self.p:
-            return data, None
+            if self.return_record:
+                return data, None
+            return data
         
         # Sample gamma
         gamma = self._parse_gamma(gamma) if gamma else self.gamma

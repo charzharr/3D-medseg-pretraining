@@ -206,7 +206,7 @@ class SoftDiceLoss(nn.Module):
         nominator = 2 * tp + self.smooth
         denominator = 2 * tp + fp + fn + self.smooth
 
-        dc = nominator / (denominator + 1e-8)
+        dc = nominator / denominator # (denominator + 1e-8)
 
         if not self.do_bg:  # ignore background?
             if self.batch_dice:
@@ -369,7 +369,7 @@ class DC_and_CE_loss(nn.Module):
               f'   dc_wt={weight_dice}, ce_wt={weight_ce}, '
               f'aggregate={aggregate}.')
 
-    def forward(self, net_output, target):
+    def forward(self, net_output, target): 
         """
         target must be b, c, x, y(, z) with c=1
         :param net_output:
