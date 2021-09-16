@@ -34,8 +34,7 @@ class BYOL3d:
         targ = targ.view(targ.shape[0], -1)
         pred_norm = F.normalize(pred, dim=-1, p=2)
         targ_norm = F.normalize(targ, dim=-1, p=2)
-        loss = torch.sum(2 - 2 * (pred_norm * targ_norm).sum(dim=-1))
-        loss /= pred.shape[0]
+        loss = (2 - 2 * (pred_norm * targ_norm).sum(dim=-1)).mean()
         return {
             'loss': loss
         }

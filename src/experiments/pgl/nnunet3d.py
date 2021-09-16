@@ -21,17 +21,30 @@ norm = nn.InstanceNorm3d
 
 
 class PGL_UNet3d(BaseModel):
-    def __init__(self, in_channels=1, num_classes=1):
+    def __init__(self, in_channels=1, num_classes=1, is_byol=False,
+                 latent_channels=4096, feat_channels=256):
         super().__init__()
-        
+        self.is_byol = is_byol
+        self.in_channels = in_channels 
+        self.num_classes = num_classes
+
         self.unet = UNet3D(n_input=in_channels, n_class=num_classes,
                            deep_sup=True)
-        self.projection = ProjectionHead(320, latent_channels=4096,
-                                         out_channels=256)
+        if self.is_byol:
+            self.projection = GlobalProjectionHead(320, 
+                latent_channels=latent_channels, out_channels=feat_channels)
+        else:
+            self.projection = ProjectionHead(320, 
+                latent_channels=latent_channels, out_channels=feat_channels)
+            
         print(f'💠 PGL Pretrain (nnUNet3D + projection) model initiated!')
 
     def forward(self, x):
-        feats = self.unet(x, enc_only=True)
+        feats = self.unet(x, enc_only=True)['out']  # Bx320xD/8xH/16xW/16
+
+        if self.is_byol:
+            feats = F.adaptive_avg_pool3d(feats, 1).flatten(start_dim=1)
+
         out = self.projection(feats)
         return {
             'out': out,
@@ -45,7 +58,8 @@ class ProjectionHead(nn.Module):
     def __init__(self, in_channels, latent_channels=4096, out_channels=256):
         super().__init__()
         
-        self.conv1 = nn.Conv3d(in_channels, latent_channels, kernel_size=1)
+        self.conv1 = nn.Conv3d(in_channels, latent_channels, kernel_size=1,
+                               bias=False)
         self.norm1 = nn.BatchNorm3d(latent_channels)
         self.relu = nn.ReLU(inplace=True)
         self.conv2 = nn.Conv3d(latent_channels, out_channels, kernel_size=1)
@@ -53,6 +67,21 @@ class ProjectionHead(nn.Module):
     def forward(self, x):
         x = self.relu(self.norm1(self.conv1(x)))
         x = self.conv2(x)
+        return x
+
+
+class GlobalProjectionHead(nn.Module):
+    def __init__(self, in_channels, latent_channels=4096, out_channels=256):
+        super().__init__()
+        
+        self.linear1 = nn.Linear(in_channels, latent_channels, bias=False)
+        self.norm1 = nn.BatchNorm1d(latent_channels)
+        self.relu = nn.ReLU(inplace=True)
+        self.linear2 = nn.Linear(latent_channels, out_channels)
+
+    def forward(self, x):
+        x = self.relu(self.norm1(self.linear1(x)))
+        x = self.linear2(x)
         return x
 
 

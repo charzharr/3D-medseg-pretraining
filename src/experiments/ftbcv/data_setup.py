@@ -173,36 +173,37 @@ def _get_sample(args):
     # sitk_image = sitk.NormalizeImageFilter().Execute(sitk_image)
     record = OrderedDict([('ZNormalize', {'mean': mean, 'std': std})])
 
-    # resample
-    resample = sitk.ResampleImageFilter()
-    resample.SetInterpolator = sitk.sitkNearestNeighbor
-    resample.SetOutputDirection(sitk_image.GetDirection())
-    resample.SetOutputOrigin(sitk_image.GetOrigin())
+    new_mask = mask = sitk.ReadImage(mask, sitk.sitkUInt8)
 
+    # resample
     orig_spacing = np.array(sitk_image.GetSpacing())
     new_spacing = list(orig_spacing[:2]) + [3]
-    resample.SetOutputSpacing(new_spacing)
+    if orig_spacing.tolist() == new_spacing:
+        resample = sitk.ResampleImageFilter()
+        resample.SetInterpolator = sitk.sitkNearestNeighbor
+        resample.SetOutputDirection(sitk_image.GetDirection())
+        resample.SetOutputOrigin(sitk_image.GetOrigin())
+        resample.SetOutputSpacing(new_spacing)
 
-    orig_size = np.array(sitk_image.GetSize())
-    new_size = orig_size * (orig_spacing / new_spacing)
-    new_size = np.ceil(new_size).astype(np.int32).tolist()
-    resample.SetSize(new_size)
-    sitk_image = resample.Execute(sitk_image)
-    
-    mask = sitk.ReadImage(mask, sitk.sitkUInt8)
-    mask_arr = sitk.GetArrayFromImage(mask)
-    mask_arr = resize_segmentation3d(mask_arr, new_size[::-1], 
-                                     class_ids=list(range(1, 14)))
-    new_mask = sitk.GetImageFromArray(mask_arr)
-    new_mask.SetOrigin(mask.GetOrigin())
-    new_mask.SetDirection(mask.GetDirection())
-    new_mask.SetSpacing(new_spacing)
+        orig_size = np.array(sitk_image.GetSize())
+        new_size = orig_size * (orig_spacing / new_spacing)
+        new_size = np.ceil(new_size).astype(np.int32).tolist()
+        resample.SetSize(new_size)
+        sitk_image = resample.Execute(sitk_image)
+        
+        mask_arr = sitk.GetArrayFromImage(mask)
+        mask_arr = resize_segmentation3d(mask_arr, new_size[::-1], 
+                                         class_ids=list(range(1, 14)))
+        new_mask = sitk.GetImageFromArray(mask_arr)
+        new_mask.SetOrigin(mask.GetOrigin())
+        new_mask.SetDirection(mask.GetDirection())
+        new_mask.SetSpacing(new_spacing)
 
-    # if index == 26:
-    #     sitk.WriteImage(sitk_image, 'aniso_orig_image.nii.gz')
-    #     sitk.WriteImage(mask, 'aniso_orig_mask.nii.gz')
-    #     sitk.WriteImage(new_sitk_image, 'aniso_resamp_image.nii.gz')
-    #     sitk.WriteImage(new_mask, 'aniso_resamp_mask.nii.gz')
+        # if index > 26:
+        #     sitk.WriteImage(sitk_image, 'aniso_orig_image.nii.gz')
+        #     sitk.WriteImage(mask, 'aniso_orig_mask.nii.gz')
+        #     sitk.WriteImage(new_sitk_image, 'aniso_resamp_image.nii.gz')
+        #     sitk.WriteImage(new_mask, 'aniso_resamp_mask.nii.gz')
 
     
 
@@ -303,8 +304,8 @@ class BCVSampleSet(SampleSet):
                     myT.GaussianNoise(p=0.1, mean=0., var=(0, 0.1)),
                     myT.GaussianBlur(p=0.2, spacing=1,   # ignore space for now
                                      sigma=(0.5, 1)),
-                    myT.ScaleIntensity(p=0.5, scale=(0.75, 1.25)),
-                    myT.Gamma(p=0.5, gamma=(0.7, 1.5))
+                    myT.ScaleIntensity(p=0.25, scale=(0.75, 1.25)),
+                    myT.Gamma(p=0.25, gamma=(0.7, 1.5))
                 ]
 
         print(f'💠 BCVSampleSet created with {len(self.samples)} samples. \n'
@@ -353,7 +354,7 @@ class BCVSampleSet(SampleSet):
         # 1. Crop
         image_tup, mask_tup = self.crop(tensor, mask_tens)
         image_crop, image_record = image_tup
-        mask_crop, image_record = mask_tup
+        mask_crop, mask_record = mask_tup
         record_dict[self.crop.__class__.__name__] = image_record
         
         # 2. Apply transforms to crop

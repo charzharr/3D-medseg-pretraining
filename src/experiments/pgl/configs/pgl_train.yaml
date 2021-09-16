@@ -4,14 +4,14 @@ experiment:
   description: |
     > Reimplementation of PGL for 3D segmentation pretraining.
     >   Data: ~1400 volumes from KiTS & MSD Hepatic  Vessel, Pancreas, Lung Tumor, Liver, Spleen.
-  id: "(0911pgl)OFIT_fulldata_mse_a1"     # for wandb run identification
+  id: "(0912pgl)BYOL_fulldata_mse_a0"     # for wandb run identification
   name: 'pgl'   # for experiment module identification
   project: '3DSeg-Pretrain'
 
   debug:                                            # (Correct Alignment)
     mode: False                                     # < Check
-    overfitbatch: True                             # < Check
-    wandb: False                                     # < Check
+    overfitbatch: False                             # < Check
+    wandb: True                                     # < Check
     save: True                                      # < Check
     break_train_iter: False                         # < Check
     break_test_iter: False                          # < Check
@@ -32,8 +32,11 @@ data:  # describing project-wide data specifications
 model:
   name: 'nnunet3d'  # 'genesis_unet3d'  # gn_unet3d
   init: 'kaiming'
-  sync_bn: False
-  ema_alpha: 0.99
+  sync_bn: True
+  ema_alpha: 0.999
+
+  feat_channels: 512
+  latent_channels: 4096
 
 
 # ---- ##  Training: iterations, criterion, optimization, etc.  ## ---- #
@@ -41,12 +44,13 @@ train:
   train_byol: True
 
   start_epoch: 0
-  epochs: 100
-  batch_size: 12
-  examples_per_volume: 8
+  epochs: 500
+  batch_size: 20
+  examples_per_volume: 7
   num_workers: 2
 
   patch_size: [32, 96, 96]
+  patch_min_overlap: 0.2
   scale_range: [0.7, 1.4]
 
   criterion:
@@ -55,9 +59,9 @@ train:
       p_norm: 2
 
   optimizer:
-    name: 'adam'  # sgd, nesterov, adam
-    lr: .002
-    wt_decay: 0 # 0.0001
+    name: 'sgd'  # sgd, nesterov, adam
+    lr: .01
+    wt_decay: 0.0000015 # 0.0001
     adam:
       betas: [0.9, 0.999]
     sgd:

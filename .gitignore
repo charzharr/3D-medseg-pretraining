@@ -34,4 +34,4 @@ analysis/
 wandb/
 wandb_login.sh
 *.log
-
+*.o*

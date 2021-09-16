@@ -19,7 +19,8 @@ if __name__ == '__main__':
 
 from lib.utils.parse import parse_bool, parse_range, parse_probability
 from data.transforms.transform_base import Transform
-from data.transforms.crops.utils import sample_crop, crop_resize_3d
+from data.transforms.resize import Resize3d
+from data.transforms.crops.utils import sample_crop, crop_resize_3d, crop_3d
 
 
 
@@ -94,6 +95,7 @@ class ScaledForegroundCropper3d:
         
         image_crop_record_list, mask_crop_record_list = [], []
         ids = None
+        resizeT = Resize3d(final_shape, return_record=False)
         # Apply transform to inputs
         for n in range(n_times):
 
@@ -102,14 +104,23 @@ class ScaledForegroundCropper3d:
                 sample_fg = False
 
             crop_shape = []
-            for i in range(0, 3):
-                if scale_range[i][0] == scale_range[i][1]:
-                    crop_shape.append(int(scale_range[i][0]) * final_shape[i])
-                else:
-                    min_shp = math.ceil(scale_range[i][0] * final_shape[i])
-                    max_shp = int(scale_range[i][1] * final_shape[i])
-                    samp_shape = torch.randint(min_shp, max_shp, (1,)).item()
-                    crop_shape.append(samp_shape)
+            # for i in range(0, 3):
+            #     if scale_range[i][0] == scale_range[i][1]:
+            #         crop_shape.append(int(scale_range[i][0] * final_shape[i]))
+            #     else:
+            #         # Old code: separate scale for each axis
+            #         min_shp = math.ceil(scale_range[i][0] * final_shape[i])
+            #         max_shp = int(scale_range[i][1] * final_shape[i])
+            #         samp_shape = torch.randint(min_shp, max_shp, (1,)).item()
+            #         crop_shape.append(samp_shape)
+
+            scale_range = scale_range[0]
+            if scale_range[0] == scale_range[1]:
+                crop_shape = [int(scale_range[0] * s) for s in final_shape]
+            else:
+                scale_factor = torch.rand((1,)).item() * (scale_range[1] - scale_range[0]) + scale_range[0]
+                crop_shape = [int(scale_factor * s) for s in final_shape]
+
             crop_shape = [min(c, s) for c, s in zip(crop_shape, volume_shape)]
 
             if sample_fg:
@@ -162,10 +173,25 @@ class ScaledForegroundCropper3d:
 
             # print(crop_lower, crop_upper, np.array(crop_upper) - np.array(crop_lower))
 
-            resized_crop = crop_resize_3d(volume_tensor, crop_lower, 
-                crop_upper, final_shape, interpolation=interpolation)
-            resized_mask = crop_resize_3d(mask_tensor, crop_lower, crop_upper, 
-                                final_shape, interpolation='nearest')
+            # Resize
+            cropped_volume_tensor = crop_3d(volume_tensor, crop_lower, 
+                                            crop_upper)
+            cropped_mask_tensor = crop_3d(mask_tensor, crop_lower, 
+                                            crop_upper)
+            assert cropped_volume_tensor.shape == cropped_mask_tensor.shape
+            if cropped_volume_tensor.shape != final_shape:
+                crop_ret = resizeT({'image': cropped_volume_tensor, 
+                                    'mask': cropped_mask_tensor})
+                resized_crop = crop_ret['image']
+                resized_mask = crop_ret['mask']
+            else:
+                resized_crop = cropped_volume_tensor
+                resized_mask = cropped_mask_tensor
+
+            # resized_crop = crop_resize_3d(volume_tensor, crop_lower, 
+            #     crop_upper, final_shape, interpolation=interpolation)
+            # resized_mask = crop_resize_3d(mask_tensor, crop_lower, crop_upper, 
+            #                     final_shape, interpolation='nearest')
 
             if self.return_record:
                 record = {

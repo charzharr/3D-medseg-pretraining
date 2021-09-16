@@ -88,6 +88,20 @@ def get_data_components(cfg):
         pretrain_df = pretrain_df.drop(labels='Unnamed: 0', axis=1)
 
     # 2. Create master list of samples (threading?) & SampleSet
+    if cfg.experiment.distributed:
+        def get_indices_slice(rank, N, worldsize):
+            if rank == worldsize - 1:
+                return slice(rank * (N // worldsize), None, 1)
+            return slice(rank * (N // worldsize), (rank + 1) * (N // worldsize))
+
+        rank = cfg.experiment.rank
+        worldsize = cfg.experiment.worldsize
+        N = len(pretrain_df)
+        slicee = get_indices_slice(rank, N, worldsize)
+        pretrain_df = pretrain_df[slicee]
+        print(f' DF of rank {rank} has {len(pretrain_df)}/{N} '
+              f'samples ({repr(slicee)}).')
+
     sample_args = []
     for i, S in pretrain_df.iterrows():
         sample_args.append((i, S['id'], S['image'], S['mask'], S['imgsize'],
@@ -111,7 +125,7 @@ def get_data_components(cfg):
         shuffle_patches=shuffle, 
         num_workers=cfg.train.num_workers, 
         headstart=True, 
-        drop_last=True
+        drop_last=False
     )
     print(f'💠 OTMLoader created w/ {len(train_set)} train samples. \n'
               f'   BatchSize={cfg.train.batch_size}, '
@@ -181,46 +195,47 @@ def patch_creator(sampset_return_dict):
     cfg = sampset_return_dict['cfg']
     examples_per_sample = cfg.train.examples_per_volume
     patch_size = cfg.train.patch_size
-    if cfg.train.train_byol:
-        cropper = ScaledUniformCropper3d(patch_size, scale_range=(1.1, 1.4))
-    else:
-        cropper = ScaledOverlapCropper3d()
+    # if cfg.train.train_byol:
+    #     cropper = ScaledUniformCropper3d(patch_size, scale_range=(0.7, 1.4))
+    # else:
+    cropper = ScaledOverlapCropper3d()
     
     transforms = [
         myT.Flip3d(p=0.5),
-        myT.GaussianNoise(p=0.1, mean=0., var=(0, 0.1)),
-        myT.GaussianBlur(p=0.2, spacing=1,   # ignore space for now
+        myT.GaussianNoise(p=0.25, mean=0., var=(0, 0.1)),  # up from 0.1
+        myT.GaussianBlur(p=0.25, spacing=1,   # up from 0.2
                             sigma=(0.5, 1)),
         myT.ScaleIntensity(p=0.5, scale=(0.75, 1.25)),
         myT.Gamma(p=0.5, gamma=(0.7, 1.5))
     ]
     
-    if cfg.train.train_byol:
-        crop_pairs = cropper(volume_tensor, n_times=examples_per_sample)
-    else:
-        crop_pairs = cropper(volume_tensor, patch_size, min_overlap=0.2,
-                             scale_range=cfg.train.scale_range,
-                             n_times=examples_per_sample)
+    # if cfg.train.train_byol:
+    #     crop_pairs = cropper(volume_tensor, n_times=examples_per_sample)
+    # else:
+    crop_pairs = cropper(volume_tensor, patch_size, 
+                         min_overlap=cfg.train.patch_min_overlap,
+                         scale_range=cfg.train.scale_range,
+                         n_times=examples_per_sample)
     
     examples = []
     for i, crop_pair in enumerate(crop_pairs):
-        if cfg.train.train_byol:
-            crop1_t, crop2_t = crop_pair[0], crop_pair[0].clone()
+        # if cfg.train.train_byol:
+        #     crop1_t, crop2_t = crop_pair[0], crop_pair[0].clone()
             
-            hist1 = collections.OrderedDict(transform_history)
-            hist1['ScaledUniformCrop3d'] = dict(crop_pair[1])
-            hist2 = collections.OrderedDict(transform_history)
-            hist2['ScaledUniformCrop3d'] = dict(crop_pair[1])
-        else:
-            crop1_d, crop2_d = crop_pair
-            crop1_t, crop2_t = crop1_d['final_tensor'], crop2_d['final_tensor']
-            
-            hist1 = collections.OrderedDict(transform_history)
-            hist1['ScaledOverlapCrop3d'] = {k: v for k, v in crop1_d.items() 
-                                            if 'tensor' not in k}
-            hist2 = collections.OrderedDict(transform_history)
-            hist2['ScaledOverlapCrop3d'] = {k: v for k, v in crop2_d.items() 
-                                            if 'tensor' not in k}
+        #     hist1 = collections.OrderedDict(transform_history)
+        #     hist1['ScaledUniformCrop3d'] = dict(crop_pair[1])
+        #     hist2 = collections.OrderedDict(transform_history)
+        #     hist2['ScaledUniformCrop3d'] = dict(crop_pair[1])
+        # else:
+        crop1_d, crop2_d = crop_pair
+        crop1_t, crop2_t = crop1_d['final_tensor'], crop2_d['final_tensor']
+        
+        hist1 = collections.OrderedDict(transform_history)
+        hist1['ScaledOverlapCrop3d'] = {k: v for k, v in crop1_d.items() 
+                                        if 'tensor' not in k}
+        hist2 = collections.OrderedDict(transform_history)
+        hist2['ScaledOverlapCrop3d'] = {k: v for k, v in crop2_d.items() 
+                                        if 'tensor' not in k}
         
         for transform in transforms:
             name = transform.name
@@ -282,8 +297,8 @@ def example_collate_fn(batch_examples):
         crop_objs.append(example)
     
     return {
-        'X': torch.cat([torch.stack(tensors1, dim=0), 
-                        torch.stack(tensors2, dim=0)], dim=0).unsqueeze(1),
+        'X1': torch.stack(tensors1, dim=0), 
+        'X2': torch.stack(tensors2, dim=0),
         'samples': samples,
         'crops': crop_objs,
         'records': hists
@@ -319,7 +334,7 @@ class PreprocessSampleSet(SampleSet):
         record_dict = OrderedDict()
                 
         # Dataset-specific resample & normalize
-        start = time.time()
+        start = time.time() 
         if dataset == 'msd':
             sub_task = sample.task
             norm_d = dataset_normalize['msd'][sub_task]
@@ -342,12 +357,10 @@ class PreprocessSampleSet(SampleSet):
         if dataset == 'kits':  # transpose axis
             transpose = sitk.PermuteAxesImageFilter()
             transpose.SetOrder([2, 1, 0])
-            print('kits old', sitk_image.GetSpacing(), sitk_image.GetSize())
             sitk_image = transpose.Execute(sitk_image)
-            print('kits new', sitk_image.GetSpacing(), sitk_image.GetSize())
         
         orig_spacing = np.array(sitk_image.GetSpacing())
-        print(dataset, orig_spacing, ispac)
+        # print(dataset, orig_spacing, ispac)
         if orig_spacing[-1] != ispac:
             resample = sitk.ResampleImageFilter()
             resample.SetInterpolator = sitk.sitkNearestNeighbor
@@ -367,12 +380,15 @@ class PreprocessSampleSet(SampleSet):
                 'old_spacing': orig_spacing, 'new_spacing': new_spacing}
         else:
             record_dict['Resample'] = None
-        print(f'[Took {time.time() - start:.2f}s to norm + resample.]')
+        # print(f'[Took {time.time() - start:.2f}s to norm + resample.]')
         
         # Get Tensor
         tensor = torch.from_numpy(sitk.GetArrayFromImage(sitk_image))
+        tensor = tensor.to(torch.float32)
         record_dict['ReadImage'] = {'shape': tensor.shape}
-        assert tensor.shape[1:] == (512, 512), f'{tensor.shape}{sample.dataset}'
+        if tensor.shape[1:] != (512, 512):
+            if dataset != 'kits' and sample.id != 'case_00060':
+                raise ValueError(f'Shape Err! {tensor.shape} {sample.dataset}')
         
         return {
             'cfg': self.cfg,

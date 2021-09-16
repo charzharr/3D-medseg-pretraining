@@ -23,4 +23,4 @@ def update_ema_model(model, ema_model, alpha, iteration_num=None):
         # iter=0 alpha=0, iter=1 alpha=0.5, iter=2 alpha=0.67, ...
         alpha = min(1 - 1 / (iteration_num + 1), alpha)
     for ema_param, param in zip(ema_model.parameters(), model.parameters()):
-        ema_param.data.mul_(alpha).add_(param.data, alpha=1 - alpha)
+        ema_param.data = alpha * ema_param.data + (1 - alpha) * param.data

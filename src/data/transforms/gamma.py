@@ -89,6 +89,7 @@ class Gamma(Transform):
 
         
     def invert(self, image, record):
+        raise NotImplementedError()
         gamma = record['gamma']
         old_min = record['old_image_min']
         old_max = record['old_image_max']
@@ -110,21 +111,27 @@ class Gamma(Transform):
         assert isinstance(image, np.ndarray) or isinstance(image, torch.Tensor)
 
         # Apply gamma transform
+        image = (image - image_min) / (image_max - image_min)
+        image = image ** gamma 
+        image = image * (image_max - image_min) + image_min
+        # print(image.shape, gamma, 'old', image_min, image_max, 'new', 
+        #       image.min(), image.max())
+        return image
+
         # print('before', bool(torch.isnan(image).any()))
-        if image_min < 0:
-            if isinstance(image, np.ndarray):
-                ret_image = np.sign(image) * np.abs(image) ** gamma
-            else:
-                ret_image = image.sign() * image.abs() ** gamma
-        else:
-            ret_image = image ** gamma
+        # if image_min < 0:
+        #     if isinstance(image, np.ndarray):
+        #         ret_image = np.sign(image) * np.abs(image) ** gamma
+        #     else:
+        #         ret_image = image.sign() * image.abs() ** gamma
+        # else:
+        #     ret_image = image ** gamma
         # print('after', bool(torch.isnan(ret_image).any()))
         
         # Normalize intensities to [0, 1]
         # image_range = image_max - image_min + 1e-7  # avoid divide by 0
         # ret_image = (ret_image - image_min) / image_range
-    
-        return ret_image
+        # return ret_image
 
         
     def _parse_gamma(self, gamma):

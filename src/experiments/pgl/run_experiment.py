@@ -115,12 +115,15 @@ def run(rank, cfg):
         ema_model = torch.nn.DataParallel(ema_model)
         predictor = torch.nn.DataParallel(predictor)
     elif cfg.experiment.distributed:
-        model = DDP(model, device_ids=[rank], output_device=rank)
-        ema_model = DDP(ema_model, device_ids=[rank], output_device=rank)
+        model = DDP(model, device_ids=[rank], output_device=rank, 
+                    find_unused_parameters=True)
+        # ema_model = DDP(ema_model, device_ids=[rank], output_device=rank)
         predictor = DDP(predictor, device_ids=[rank], output_device=rank)
         print(f'  * Rank {rank} using device {device} via nn.DDP.')
-        # if cfg.model.sync_bn:
-        #     model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
+        if cfg.model.sync_bn:
+            model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
+            predictor = torch.nn.SyncBatchNorm.convert_sync_batchnorm(predictor)
+            print(f'  * Rank {rank} using syncBN.')
     
     # Get criterion, optimizer, scheduler
     if rank == 0:
@@ -174,19 +177,37 @@ def run(rank, cfg):
             records = batch['records']
             crop_objs = batch['crops']
             
-            X = batch['X'].to(device, non_blocking=True)
-            
-            with torch.no_grad():
-                emaout = ema_model(X)['out']
-            out = model(X)['out']
-            fin_out = predictor(out)
-            
-            import IPython; IPython.embed(); 
-            
-            loss_d = criterion(fin_out, emaout)
-            loss = loss_d['loss']
-            
+            X1 = batch['X1'].unsqueeze(1).to(device, non_blocking=True)
+            X2 = batch['X2'].unsqueeze(1).to(device, non_blocking=True)
+
+            if it <= 4 and False:  # visualize NN input
+                for i in range(5):  
+                    im1 = X1[i][0].detach().cpu()
+                    im2 = X2[i][0].detach().cpu()
+
+                    dataset = str(samples[i].dataset)
+                    if dataset == 'msd':
+                        dataset += f'|{samples[i].task}'
+
+                    save_image(im1, f'it{it}_im{i}_view1_{dataset}', samples[i], 
+                               history=records[i][0], is_mask=False)
+                    save_image(im2, f'it{it}_im{i}_view2_{dataset}', samples[i], 
+                               history=records[i][1], is_mask=False)
+
+            proj1 = model(X1)['out']
+            proj2 = model(X2)['out']
+            pred1 = predictor(proj1)
+            pred2 = predictor(proj2)
+
             optimizer.zero_grad()
+            with torch.no_grad():
+                targ1 = ema_model(X1)['out']
+                targ2 = ema_model(X2)['out']
+
+            loss1 = criterion(pred1, targ1.detach())['loss'] 
+            loss2 = criterion(pred2, targ2.detach())['loss']
+            loss = loss1 + loss2
+            
             loss.backward()
             optimizer.step()
             update_ema_model(model, ema_model, cfg.model.ema_alpha)
@@ -195,8 +216,8 @@ def run(rank, cfg):
             if rank == 0:
                 iter_time = WATCH.toc('iter', disp=False)
                 loss_str = f'loss {loss.item():.3f}'
-                print_niter = 100 if not debug.overfitbatch else 10
-                if rank == 0 and it % print_niter == print_niter - 1:
+                print_niter = 1 if not debug.overfitbatch else 20
+                if it % print_niter == print_niter - 1:
                     print(f"    Iter {it+1}/{len(train_loader)} "
                         f"({iter_time:.1f} sec, {mem():.1f} GB) - {loss_str} ",
                         flush=True)
@@ -205,7 +226,7 @@ def run(rank, cfg):
             
             global_iter += 1
             WATCH.tic('iter')
-            if debug['break_train_iter'] and it >= 2: 
+            if debug['break_train_iter'] and it >= 10: 
                 break
         
         scheduler.step(epoch=epoch, value=0)
@@ -225,19 +246,39 @@ def run(rank, cfg):
             
             if not debug['save']:
                 print(f'🚨  Model-saving functionality is off! \n')
-            if debug['save'] and epoch % 10 == 9:
-                save_model(cfg, model.state_dict(), tracker, epoch, source_code)
+            if debug['save'] and epoch % 50 == 49:
+                save_model(cfg, model.state_dict(), ema_model.state_dict(),
+                           predictor.state_dict(),
+                           tracker, epoch, source_code)
             WATCH.toc(name='epoch')
         # End of epoch #
 
 
 def get_model(cfg):
+    patch_size = cfg.train.patch_size
+    num_proj_dims = cfg.model.feat_channels
+    num_hidden_dims = cfg.model.latent_channels
     if cfg.model.name == 'nnunet3d':
         from experiments.pgl.nnunet3d import PGL_UNet3d, ProjectionHead
-        model = PGL_UNet3d(in_channels=1, num_classes=14)
-        ema_model = PGL_UNet3d(in_channels=1, num_classes=14)
+        model = PGL_UNet3d(in_channels=1, num_classes=14, 
+                           is_byol=cfg.train.train_byol,
+                           latent_channels=num_hidden_dims,
+                           feat_channels=num_proj_dims)
+        ema_model = PGL_UNet3d(in_channels=1, num_classes=14,
+                               is_byol=cfg.train.train_byol,
+                               latent_channels=num_hidden_dims,
+                               feat_channels=num_proj_dims)
         ema_model = create_ema_model(ema_model)
-        predictor = ProjectionHead(256, latent_channels=4096, out_channels=256)
+
+        if not cfg.train.train_byol:
+            predictor = ProjectionHead(num_proj_dims, 
+                                       latent_channels=num_hidden_dims, 
+                                       out_channels=num_proj_dims)
+        else:
+            from experiments.pgl.nnunet3d import GlobalProjectionHead
+            predictor = GlobalProjectionHead(num_proj_dims, 
+                                             latent_channels=num_hidden_dims,
+                                             out_channels=num_proj_dims)
     # elif cfg.model.name == 'denseunet3d':
     #     from lib.nets.volumetric.denseunet3d import get_model as get_dunet
     #     model = get_dunet(201, num_classes=14, deconv=False)
@@ -295,17 +336,19 @@ def get_model(cfg):
     }
 
 
-def save_model(cfg, state_dict, tracker, epoch, code_d):
+def save_model(cfg, state_dict, ema_state_dict, pred_state_dict,
+               tracker, epoch, code_d):
     """ Does not delete old model files. """
-    end = 'last'
     curr_path = pathlib.Path(__file__).parent.absolute()
     fn_start = f"{cfg['experiment']['id']}_{cfg['experiment']['name']}_"
     
-    filename = fn_start + f'ep{epoch}_' + end + '.pth'
+    filename = fn_start + f'ep{epoch}_' + '.pth'
     save_path = os.path.join(curr_path, 'artifacts', filename)
     print(f"Saving model -> {filename}")
     torch.save({
         'state_dict': state_dict,
+        'ema_state_dict': ema_state_dict,
+        'predictor_state_dict': pred_state_dict,
         'code_dict': code_d,
         'tracker': tracker,
         'config': cfg,
@@ -338,5 +381,32 @@ def synchronize():
     torch.distributed.barrier()
 
 
+def save_image(data, name, sample, history=None, is_mask=False):
+    if is_mask:
+        if data.ndim == 4 and data.shape[0] == 1:
+            data = data.squeeze(0)
+        elif data.ndim == 4 and data.shape[0] > 1:
+            data = data.argmax(0)
+        assert data.ndim == 3
+        if isinstance(data, torch.Tensor):
+            data = data.detach().cpu().numpy()
+        data = data.astype(np.uint8)
+    else:
+        assert data.ndim == 3
+        if history:
+            from data.transforms.z_normalize import ZNormalize
+            data = ZNormalize().invert(data, history['ZNormalize'])
+        if isinstance(data, torch.Tensor):
+            data = data.detach().cpu().numpy()
+        data = data.astype(np.int16)
+
+    sitk_crop = sitk.GetImageFromArray(data)
+    sitk_crop.SetOrigin(sample.image.origin)
+    sitk_crop.SetDirection(sample.image.direction)
+    sitk_crop.SetSpacing(sample.image.spacing)
+
+    if len(name) <= 7 or name[-7:] != '.nii.gz':
+        name = name + '.nii.gz'
+    sitk.WriteImage(sitk_crop, name)
 
 

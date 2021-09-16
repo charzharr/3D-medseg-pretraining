@@ -118,6 +118,7 @@ class Resize3d(Transform):
             return image
 
         if interpolation == 'segmask':
+            # print('apply mask', image.shape)
             return resize_segmentation3d(image, size[-3:])
 
         shape = image.shape
@@ -193,12 +194,14 @@ def resize_segmentation3d(mask, new_shape, class_ids=[]):
         final_mask = np.zeros(new_shape, dtype=mask_arr.dtype)
         for i, val in enumerate(unique_labels):
             channel_mask = mask_arr == val
-            resized_channel = resize(channel_mask.astype(np.float32),
-                                     new_shape, order, mode='edge',
-                                     clip=True, anti_aliasing=False)
-            final_mask[resized_channel >= 0.5] = val
+            if channel_mask.sum() > 0:
+                resized_channel = resize(channel_mask.astype(np.float32),
+                                         new_shape, order, mode='edge',
+                                         clip=True, anti_aliasing=False)
+                final_mask[resized_channel >= 0.5] = val
     else:  # resize each channel of one-hot mask
         assert mask_arr.ndim == 4
+        raise NotImplementedError('Not yet tested.')
         final_mask = np.zeros([mask_arr.shape[0]] + list(new_shape), 
                               dtype=mask_arr.dtype)
         for i in range(mask_arr.shape[0]):

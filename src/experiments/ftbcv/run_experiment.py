@@ -81,6 +81,8 @@ def run(rank, cfg, inference_metrics_queue):
         cfg.__dict__ = cfg
         inference_metrics_queue = torch.multiprocessing.Queue()  # replace
 
+        torch.cuda.set_device(cfg.experiment.rank)
+
     # ------------------ ##  Experiment Setup  ## ------------------ #
     if rank == 0:
         output.header_one('I. BCV Finetune Training Components Setup')
@@ -282,6 +284,7 @@ def run(rank, cfg, inference_metrics_queue):
                     mask = Y_id[i][0].detach().cpu().numpy().astype(np.uint8)
                     pred = pred_ids[i][0].detach().cpu().numpy().astype(np.uint8)
 
+                    print(f'⭐ Iteration {it+1}, Example {i+1} Info..')
                     sim = samples[i].image.sitk_image
                     print(samples[i].image)
                     print(samples[i].mask)
@@ -289,14 +292,20 @@ def run(rank, cfg, inference_metrics_queue):
 
                     scrop = sitk.GetImageFromArray(img)
                     scrop.SetSpacing(sim.GetSpacing())
+                    scrop.SetOrigin(sim.GetOrigin())
+                    scrop.SetDirection(sim.GetDirection())
                     sitk.WriteImage(scrop, f'ofit_crop{i + 1}.nii.gz')
 
                     smask = sitk.GetImageFromArray(mask)
                     smask.SetSpacing(sim.GetSpacing())
+                    smask.SetOrigin(sim.GetOrigin())
+                    smask.SetDirection(sim.GetDirection())
                     sitk.WriteImage(smask, f'ofit_targ{i + 1}.nii.gz')
                     
                     spred = sitk.GetImageFromArray(pred)
                     spred.SetSpacing(sim.GetSpacing())
+                    spred.SetOrigin(sim.GetOrigin())
+                    spred.SetDirection(sim.GetDirection())
                     sitk.WriteImage(spred, f'ofit_pred{i + 1}.nii.gz')
 
             global_iter += 1
@@ -355,8 +364,31 @@ def get_model(cfg):
     weights = data_setup.weights_d['bcv_cbrt']
     percs = 1 / weights
     approx_logits = torch.log(percs)
+    
+    if 'cumednet' in cfg.model.name:
+        from lib.nets.volumetric.cumednet3d import CUMedNet3d
+        model = CUMedNet3d(1, 14, stage_counts=[3, 4, 6, 3], init_channels=32,
+                           stage_expansions=[2, 3, 6, 12], use_add=True,
+                           concat_channels=16)
+        with torch.no_grad():
+            model.final_conv2.bias = torch.nn.Parameter(approx_logits.clone())
+    elif 'cotr' in cfg.model.name:
+        """ 
+        Outputs: torch.Size([2, 14, 48, 192, 192])
+                 torch.Size([2, 14, 48, 96, 96])
+                 torch.Size([2, 14, 24, 48, 48])
+                 torch.Size([2, 14, 12, 24, 24])
+        """
+        assert cfg.train.patch_size == [48, 192, 192]
+        from lib.nets.volumetric.cotr.cotr3d import ResTranUnet
+        model = ResTranUnet(norm_cfg='IN', img_size=cfg.train.patch_size,
+                            num_classes=14, deep_supervision=cfg.train.deep_sup)
 
-    if cfg.model.name == 'nnunet3d':
+        # model = model.to(cfg.experiment.device)
+        # X = torch.randn((2, 1, 48, 192, 192)).to(cfg.experiment.device)
+        # import IPython; IPython.embed(); 
+        # import sys; sys.exit(1)
+    elif cfg.model.name == 'nnunet3d':
         from experiments.ftbcv.nnunet3d import UNet3D
         model = UNet3D(n_input=1, n_class=14, deep_sup=cfg.train.deep_sup)
         with torch.no_grad():
@@ -416,7 +448,7 @@ def get_model(cfg):
             checkpoint_d = torch.load(filepath, map_location='cpu')
             state_dict = checkpoint_d['state_dict']
             print(model.load_state_dict(state_dict))
-    else: 
+    elif 'cotr' not in cfg.model.name: 
         # Initialize
         init_type = cfg.model.init
         if init_type:
@@ -727,7 +759,7 @@ def save_image(data, name, sample, history=None, is_mask=False):
     else:
         assert data.ndim == 3
         if history:
-            from data.transforms.z_normalize import ZNormlize
+            from data.transforms.z_normalize import ZNormalize
             data = ZNormalize().invert(data, history['ZNormalize'])
         if isinstance(data, torch.Tensor):
             data = data.detach().cpu().numpy()
