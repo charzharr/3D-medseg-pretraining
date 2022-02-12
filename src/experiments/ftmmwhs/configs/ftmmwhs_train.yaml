@@ -1,0 +1,121 @@
+
+# ---- ##  Experiment Setup, Logging Specifications, Environment  ## ---- #
+experiment:
+  description: |
+    > MMWHS segmentation finetuning.
+    >   Data: 20 volumes of 7 heart structures (16 train, 4 test).
+  id: "(0126r4_whsFS25_res2unet101)vs250_dsup+batchdice_cedc-adamw,01-cos_r1"     # for wandb run identification
+
+  name: 'ftmmwhs'   # for experiment module identification
+  project: 'miccai22_pretrain3d'
+
+  debug:                                            # (Correct Alignment)
+    mode: False                                     # < Check
+    overfitbatch: False                             # < Check
+    wandb: True                                     # < Check
+    save: True                                      # < Check
+    break_train_iter: False                         # < Check
+    break_test_iter: False                          # < Check
+    test_every_n_epochs: 1
+  seed: 420
+  hpsamp: ""
+  adjust_by_comp: False  # adjust training params based on specific components
+
+  checkpoint:
+    file: ''
+
+
+# ---- ##  Data Preprocessing, Loading, Transformation  ## ---- #
+
+data:  # describing project-wide data specifications
+  name: 'mmwhs'
+  mmwhs:
+    num_classes: 8  # including background
+    split: 'fs25_8-2_a.csv'  # 'lab_df.csv' 'fs50_8-2_a.csv'
+      # 16 train, 4 test | 
+
+# Model / Criterion / Other nn.Module Specifications
+model:
+  name: 'res2unet3d'  # nnunet3d, hrnet3d, denseunet3d, unet3p3d, res2unet3d
+  init: 'kaiming'
+  sync_bn: True
+  norm: 'batchnorm'
+  act: 'relu'
+
+  denseunet3d:
+    layers: 201
+  hrnet3d:
+    cfg: 'seg_hrnetv2_w48.yaml'
+  res2unet3d:
+    layers: 101
+    base_width: 26  # default: 26
+
+# ---- ##  Training: iterations, criterion, optimization, etc.  ## ---- #
+
+train:
+  deep_sup: True
+
+  epochs: 100
+  start_epoch: 0
+  batch_size: 4   # subject to change based on model, deep_sup, crop size
+  examples_per_volume: 250  # 250, 250 iterations per epoch (nnUNet)
+    # for fs100: 100, fs25: 150
+  num_workers: 3
+
+  patch_size: [64, 128, 128] # [64, 128, 128], [32, 160, 160]
+  fg_bias: 0.333
+  scale_range: [0.9, 1.1]
+  
+  t_flip: 0.25  # flip on all 3 axis
+  t_gn: 0.  # gaussian noise
+  t_gb: 0.15  # gaussian blur
+  t_intensity_scale: 0.25
+  t_gamma: 0.15
+
+  criterion:
+    name: 'dice_ce_nnunet'
+    dice_ce_nnunet:
+      dc_kw:
+        do_bg: True
+        batch_dice: True
+        smooth: 1.
+      ce_kw:
+        weights_key: ''  # 'bcv' # 'bcv_cbrt'
+    soft_dice_nnunet:
+      do_bg: null
+
+  optimizer:
+    name: 'adamw'
+    lr: 0.01  # usually 0.01 for FS50 & above
+    wt_decay: 0.01
+    
+    nesterov:
+      momentum: 0.99
+    sgd:
+      momentum: 0.9
+    adam:
+      betas: [0.9, 0.999]
+    adamw:
+      betas: [0.9, 0.999]
+
+  scheduler:
+    name: 'cosine'
+    rampup_rates: []
+    min_lr: 0.000001
+    
+    poly:
+      power: 0.9
+
+    step:
+      factor: 0.2
+      steps: [0.3, 0.6, 0.9]
+    
+    exponential:
+      exp_factor: 0.95
+
+test:
+  batch_size: 4
+
+
+
+

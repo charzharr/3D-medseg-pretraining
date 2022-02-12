@@ -52,10 +52,7 @@ def get_model(model_depth, **kwargs):
                          growth_rate=32,
                          block_config=(6, 12, 64, 48),
                          **kwargs)
-
     return model
-
-
 
 
 class ForwardHook:

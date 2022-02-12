@@ -104,6 +104,8 @@ def get_data_components(cfg):
     for i, S in pd.concat([train_df, val_df, test_df]).iterrows():
         sample_args.append((i, S['id'], S['image'], S['mask'], S['imgsize'],
                             S['subset']))
+        if cfg.experiment.debug.mode and i == 10:
+            break
     print(f'Collecting data samples:')
     with multiprocessing.Pool() as pool:  # took 5 sec to load BCV
         samples = pool.map(_get_sample, sample_args)
@@ -138,7 +140,7 @@ def get_data_components(cfg):
           f'   Batch-size={cfg.train.batch_size}, Shuffle={shuffle}. \n')
 
     print(f'\nValidation Data Components:')
-    val_set = BCVSampleSet(cfg, val_samples)
+    val_set = BCVSampleSet(cfg, val_samples) if val_samples else None
 
     print(f'\nTest Data Components:')
     test_set = BCVSampleSet(cfg, test_samples)
@@ -173,12 +175,12 @@ def _get_sample(args):
     # sitk_image = sitk.NormalizeImageFilter().Execute(sitk_image)
     record = OrderedDict([('ZNormalize', {'mean': mean, 'std': std})])
 
-    new_mask = mask = sitk.ReadImage(mask, sitk.sitkUInt8)
+    mask = sitk.ReadImage(mask, sitk.sitkUInt8)
 
     # resample
     orig_spacing = np.array(sitk_image.GetSpacing())
     new_spacing = list(orig_spacing[:2]) + [3]
-    if orig_spacing.tolist() == new_spacing:
+    if orig_spacing.tolist() != new_spacing:
         resample = sitk.ResampleImageFilter()
         resample.SetInterpolator = sitk.sitkNearestNeighbor
         resample.SetOutputDirection(sitk_image.GetDirection())
@@ -198,6 +200,8 @@ def _get_sample(args):
         new_mask.SetOrigin(mask.GetOrigin())
         new_mask.SetDirection(mask.GetDirection())
         new_mask.SetSpacing(new_spacing)
+    else:
+        new_mask = mask
 
         # if index > 26:
         #     sitk.WriteImage(sitk_image, 'aniso_orig_image.nii.gz')
@@ -241,6 +245,9 @@ def _get_class_names(dataset, task=None):
         from data.decathlon.dataset import TASKS, CLASSES_D
         assert task is not None and task in TASKS
         return CLASSES_D[task]
+    elif dataset == 'mmwhs':
+        from data.mmwhs.dataset import CLASSES
+        return CLASSES
     
     raise ValueError(f'Given dataset "{dataset}" is invalid.')
 
@@ -299,13 +306,22 @@ class BCVSampleSet(SampleSet):
                 scale_range=cfg.train.scale_range, 
                 foreground_p=cfg.train.fg_bias)
             if not cfg.experiment.debug.overfitbatch:
+                # self.transforms = [
+                #     myT.Flip3d(p=0.5),
+                #     myT.GaussianNoise(p=0.1, mean=0., var=(0, 0.1)),
+                #     myT.GaussianBlur(p=0.2, spacing=1,   # ignore space for now
+                #                      sigma=(0.5, 1)),
+                #     myT.ScaleIntensity(p=0.25, scale=(0.75, 1.25)),
+                #     myT.Gamma(p=0.25, gamma=(0.7, 1.5))
+                # ]
                 self.transforms = [
-                    myT.Flip3d(p=0.5),
-                    myT.GaussianNoise(p=0.1, mean=0., var=(0, 0.1)),
-                    myT.GaussianBlur(p=0.2, spacing=1,   # ignore space for now
+                    myT.Flip3d(p=cfg.train.t_flip),
+                    myT.GaussianNoise(p=cfg.train.t_gn, mean=0., var=(0, 0.1)),
+                    myT.GaussianBlur(p=cfg.train.t_gb, spacing=1,
                                      sigma=(0.5, 1)),
-                    myT.ScaleIntensity(p=0.25, scale=(0.75, 1.25)),
-                    myT.Gamma(p=0.25, gamma=(0.7, 1.5))
+                    myT.ScaleIntensity(p=cfg.train.t_intensity_scale, 
+                                       scale=(0.75, 1.25)),
+                    myT.Gamma(p=cfg.train.t_gamma, gamma=(0.7, 1.5))
                 ]
 
         print(f'💠 BCVSampleSet created with {len(self.samples)} samples. \n'

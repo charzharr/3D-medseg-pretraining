@@ -1,0 +1,108 @@
+
+# ---- ##  Experiment Setup, Logging Specifications, Environment  ## ---- #
+experiment:
+  description: |
+    > MMWHS segmentation finetuning.
+    >   Data: 20 volumes of 7 heart structures (16 train, 4 test).
+  id: "(1210_whsBase_unet3p)dsup+batchdice_adam-cedc_s1"     # for wandb run identification
+
+  name: 'ftmmwhs'   # for experiment module identification
+  project: 'miccai22_pretrain3d'
+
+  debug:                                            # (Correct Alignment)
+    mode: False                                     # < Check
+    overfitbatch: False                             # < Check
+    wandb: True                                     # < Check
+    save: False                                      # < Check
+    break_train_iter: False                         # < Check
+    break_test_iter: False                          # < Check
+    test_every_n_epochs: 1
+  seed: 420
+  hpsamp: ""
+
+  checkpoint:
+    file: ''
+
+
+# ---- ##  Data Preprocessing, Loading, Transformation  ## ---- #
+
+data:  # describing project-wide data specifications
+  name: 'mmwhs'
+  mmwhs:
+    num_classes: 8  # including background
+    split: 'lab_df.csv'  # 16 train, 4 test
+
+
+# Model / Criterion / Other nn.Module Specifications
+model:
+  name: 'unet3p3d'  # nnunet3d, dvn3d, denseunet3d, unet3p3d
+  init: 'kaiming'
+  sync_bn: True
+
+
+# ---- ##  Training: iterations, criterion, optimization, etc.  ## ---- #
+
+train:
+  deep_sup: True
+
+  epochs: 250
+  start_epoch: 0
+  batch_size: 4   # subject to change based on model, deep_sup, crop size
+  examples_per_volume: 25  # 250 iterations per epoch (nnUNet)
+  num_workers: 3
+
+  patch_size: [64, 64, 64] # [32, 176, 176]
+  fg_bias: 0.5
+  scale_range: [0.9, 1.1]
+  
+  t_flip: 0.25  # flip on all 3 axis
+  t_gn: 0.  # gaussian noise
+  t_gb: 0.15  # gaussian blur
+  t_intensity_scale: 0.25
+  t_gamma: 0.15
+
+  criterion:
+    name: 'dice_ce_nnunet'
+    dice_ce_nnunet:
+      dc_kw:
+        do_bg: True
+        batch_dice: True
+        smooth: 1.
+      ce_kw:
+        weights_key: ''  # 'bcv' # 'bcv_cbrt'
+    soft_dice_nnunet:
+      do_bg: null
+
+  optimizer:
+    name: 'adam'
+    lr: 0.01
+    wt_decay: 0
+    
+    nesterov:
+      momentum: 0.99
+    adam:
+      betas: [0.9, 0.999]
+    sgd:
+      momentum: 0.9
+
+  scheduler:
+    name: 'step'
+    rampup_rates: []
+    min_lr: 0.000001
+    
+    poly:
+      power: 0.9
+
+    step:
+      factor: 0.2
+      steps: [0.3, 0.6, 0.9]
+    
+    exponential:
+      exp_factor: 0.95
+
+test:
+  batch_size: 4
+
+
+
+

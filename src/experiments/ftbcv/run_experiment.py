@@ -54,11 +54,11 @@ WATCH = timers.StopWatch()
 SAVE_AFTER = 0.0  # Only save model when over this percentage of epochs done.
 SAVE_MOST_RECENT_MODEL = True
 SAVE_BEST_METRICS = {  # metric (str): max_better (bool)
-    'val_ep_dice_mean': True,
+    'test_ep_dice_mean': True,
 }
 SUMMARIZE = {
-    'triggers': ['val_ep_dice_mean'],
-    'saves': ['val_ep_dice_mean', 'val_ep_jaccard_mean']
+    'triggers': ['test_ep_dice_mean'],
+    'saves': ['test_ep_dice_mean', 'test_ep_jaccard_mean']
               # 'test_ep_dice', 'test_ep_jaccard']
 }
 
@@ -94,7 +94,26 @@ def run(rank, cfg, inference_metrics_queue):
     device = cfg.experiment.device
     debug = cfg.experiment.debug
 
-    if rank == 0:
+    if rank == 0:  # wandb sweeping or standard tracking
+        if 'sweep' in cfg.experiment and cfg.experiment.sweep:
+            wandb_settings = {
+                'project': cfg['experiment']['project'],
+                'name': cfg.experiment.id + '_' + cfg.experiment.name,
+                'group': cfg.experiment.sweep_id,
+                'job_type': cfg.experiment.sweep_run_name,
+                'config': cfg
+            }
+        else:
+            wandb_settings = {}
+            if cfg['experiment']['debug']['wandb']:
+                wandb_settings = {
+                    'project': cfg['experiment']['project'],
+                    'name': cfg.experiment.id + '_' + cfg.experiment.name,
+                    'config': cfg,
+                    'notes': cfg['experiment']['description']
+                }
+        tracker = statistics.WandBTracker(wandb_settings=wandb_settings)
+        
         print(f"[Experiment Settings (@supervised/emain.py)]")
         print(f" > Prepping train config..")
         print(f"\t - experiment:  {cfg.experiment.project} - "
@@ -107,16 +126,7 @@ def run(rank, cfg, inference_metrics_queue):
               f"\t - wt_decay {cfg.train.optimizer.wt_decay} ")
         print(f"\t - Scheduler ({cfg.train.scheduler.name}): "
               f"\t - rampup: {cfg.train.scheduler.rampup_rates}\n")
-
-        wandb_settings = {}
-        if cfg['experiment']['debug']['wandb']:
-            wandb_settings = {
-                'project': cfg['experiment']['project'],
-                'name': cfg.experiment.id + '_' + cfg.experiment.name,
-                'config': cfg,
-                'notes': cfg['experiment']['description']
-            }
-        tracker = statistics.WandBTracker(wandb_settings=wandb_settings)
+    
     source_code = {
         'run': inspect.getsource(inspect.getmodule(inspect.currentframe())),
         'data': inspect.getsource(inspect.getmodule(data_setup)),
@@ -202,6 +212,7 @@ def run(rank, cfg, inference_metrics_queue):
         if rank == 0:
             sec_header = f'Starting Epoch {epoch+1} (lr: {scheduler.lr:.7f})'
             output.subsection(sec_header)
+            ram(disp=True)
         
         WATCH.tic('epoch')
         model.train()
@@ -220,23 +231,59 @@ def run(rank, cfg, inference_metrics_queue):
             loss_d = criterion(out, Y_id)
             loss = loss_d['loss']
 
-            if cfg.train.deep_sup:
+            # if cfg.train.deep_sup:
+            #     num_classes = samples[0].mask.num_classes
+            #     weights, losses = [1], [loss]
+            #     for resolution in (2, 4, 8):
+            #         weights.append(1/resolution)
+            #         logits = out_d[f'{str(resolution)}x']
+
+            #         size = [s // resolution for s in Y_id.shape[2:]]
+            #         size[0] *= 2
+            #         targs = torch.zeros(list(Y_id.shape[:2]) + size)
+            #         for b in range(Y_id.shape[0]):
+            #             targs[b][0] = resize_segmentation3d(
+            #                             Y_id[b][0], size, 
+            #                             class_ids=list(range(1, num_classes)))
+            #             # save_image(targs[b][0], f'it{it}_res{resolution}_mask{b}', 
+            #             #             samples[b], history=records[b], is_mask=True)
+            #         losses.append(criterion(logits, targs.to(device))['loss'])
+            #     weights = [w/sum(weights) for w in weights]
+            #     # print(weights)
+            #     # print(losses)
+            #     loss = sum([w * l for w, l in zip(weights, losses)])
+            
+            if cfg.train.deep_sup and isinstance(out_d, dict):
                 num_classes = samples[0].mask.num_classes
                 weights, losses = [1], [loss]
-                for resolution in (2, 4, 8):
-                    weights.append(1/resolution)
-                    logits = out_d[f'{str(resolution)}x']
+                
+                if cfg.model.name == 'dvn3d':
+                    weights.append(1/3)
+                    logits = out_d['2x']
+                    losses.append(criterion(logits, Y_id)['loss'])
+                elif cfg.model.name in ('denseunet3d', 'unet3p3d', 'res2unet3d'):
+                    resolutions = [2, 4, 8]
+                    if cfg.model.name == 'unet3p3d':
+                        resolutions.append(16)
+                    for resolution in resolutions:
+                        weights.append(1/resolution)
+                        logits = out_d[f'{str(resolution)}x']
+                        losses.append(criterion(logits, Y_id)['loss'])
+                else:
+                    for resolution in (2, 4, 8):
+                        weights.append(1/resolution)
+                        logits = out_d[f'{str(resolution)}x']
 
-                    size = [s // resolution for s in Y_id.shape[2:]]
-                    size[0] *= 2
-                    targs = torch.zeros(list(Y_id.shape[:2]) + size)
-                    for b in range(Y_id.shape[0]):
-                        targs[b][0] = resize_segmentation3d(
-                                        Y_id[b][0], size, 
-                                        class_ids=list(range(1, num_classes)))
-                        # save_image(targs[b][0], f'it{it}_res{resolution}_mask{b}', 
-                        #             samples[b], history=records[b], is_mask=True)
-                    losses.append(criterion(logits, targs.to(device))['loss'])
+                        size = [s // resolution for s in Y_id.shape[2:]]
+                        size[0] *= 2
+                        targs = torch.zeros(list(Y_id.shape[:2]) + size)
+                        for b in range(Y_id.shape[0]):
+                            targs[b][0] = resize_segmentation3d(
+                                            Y_id[b][0], size, 
+                                            class_ids=list(range(1, num_classes)))
+                            # save_image(targs[b][0], f'it{it}_res{resolution}_mask{b}', 
+                            #             samples[b], history=records[b], is_mask=True)
+                        losses.append(criterion(logits, targs.to(device))['loss'])
                 weights = [w/sum(weights) for w in weights]
                 # print(weights)
                 # print(losses)
@@ -258,7 +305,7 @@ def run(rank, cfg, inference_metrics_queue):
                     preds = preds.cpu()
             
                 iter_metrics_d = batch_metrics(preds, targs, 
-                                           ignore_background=False)
+                                               ignore_background=False)
                 iter_metrics_d['loss'] = loss.item()
 
                 iter_time = WATCH.toc('iter', disp=False)
@@ -310,7 +357,7 @@ def run(rank, cfg, inference_metrics_queue):
 
             global_iter += 1
             WATCH.tic('iter')
-            if debug['break_train_iter'] and it >= 12: 
+            if debug['break_train_iter'] and it >= 6: 
                 break
 
         out = None; out_d = None  # save mem for inference
@@ -327,13 +374,21 @@ def run(rank, cfg, inference_metrics_queue):
         # Test + Epoch Metrics
         test_every_n = debug.test_every_n_epochs
         if epoch % test_every_n == test_every_n - 1:
+            # if rank == 0:
+            #     output.subsubsection('Validation Metrics')
+            # N_val_exs = len(data_d['df'][data_d['df']['subset'] == 'val'])
+            # val_mets = test_metrics(cfg, model, val_set, epoch, 
+            #     inference_metrics_queue, N_val_exs, name='val')
+            # if rank == 0:
+            #     epoch_mets.update(val_mets, tracked_epmets, 'val_ep_')
+            
             if rank == 0:
-                output.subsubsection('Validation Metrics')
-            N_val_exs = len(data_d['df'][data_d['df']['subset'] == 'val'])
-            val_mets = test_metrics(cfg, model, val_set, epoch, 
-                inference_metrics_queue, N_val_exs, name='val')
+                output.subsubsection('Testing Metrics')
+            N_test_exs = len(data_d['df'][data_d['df']['subset'] == 'test'])
+            test_mets = test_metrics(cfg, model, test_set, epoch, 
+                inference_metrics_queue, N_test_exs, name='test')
             if rank == 0:
-                epoch_mets.update(val_mets, tracked_epmets, 'val_ep_')
+                epoch_mets.update(test_mets, tracked_epmets, 'test_ep_')
             
             # output.subsubsection('Testing Metrics')
             # test_mets = test_metrics(cfg, model, test_set, epoch, name='test')
@@ -359,8 +414,15 @@ def run(rank, cfg, inference_metrics_queue):
         # --  End of epoch -- #
 
 
-def get_model(cfg):
+def get_model(cfg, class_bal_bias=False):
+    num_classes = cfg.data[cfg.data.name].num_classes
+    in_channels, deep_sup = 1, cfg.train.deep_sup
+    img_size = cfg.train.patch_size
 
+    norm = cfg.model.norm
+    act = cfg.model.act
+    
+    print(f'[NET] Model={cfg.model.name}, Class-Balanced Biases={class_bal_bias}')
     weights = data_setup.weights_d['bcv_cbrt']
     percs = 1 / weights
     approx_logits = torch.log(percs)
@@ -372,6 +434,20 @@ def get_model(cfg):
                            concat_channels=16)
         with torch.no_grad():
             model.final_conv2.bias = torch.nn.Parameter(approx_logits.clone())
+    elif cfg.model.name == 'res2unet3d':
+        from lib.nets.volumetric.res2unet3d import res2net50_v1b, res2net101_v1b
+        if cfg.model.res2unet3d.layers == 50:
+            model = res2net50_v1b(pretrained=False, 
+                                  base_width=cfg.model.res2unet3d.base_width,
+                                  act=act, norm=norm,
+                                  in_channels=in_channels, 
+                                  num_classes=num_classes)
+        else:
+            model = res2net101_v1b(pretrained=False, 
+                                   base_width=cfg.model.res2unet3d.base_width,
+                                   act=act, norm=norm,
+                                   in_channels=in_channels, 
+                                   num_classes=num_classes)
     elif 'cotr' in cfg.model.name:
         """ 
         Outputs: torch.Size([2, 14, 48, 192, 192])
@@ -448,7 +524,7 @@ def get_model(cfg):
             checkpoint_d = torch.load(filepath, map_location='cpu')
             state_dict = checkpoint_d['state_dict']
             print(model.load_state_dict(state_dict))
-    elif 'cotr' not in cfg.model.name: 
+    elif 'cotr' not in cfg.model.name and 'unetr' != cfg.model.name: 
         # Initialize
         init_type = cfg.model.init
         if init_type:
@@ -695,9 +771,17 @@ def save_model(cfg, state_dict, tracker, epoch, code_d):
     if end == 'last' and not SAVE_MOST_RECENT_MODEL:
         return
 
+    # Create directories in exp/artifacts
     curr_path = pathlib.Path(__file__).parent.absolute()
+    exp_save_path = curr_path / 'artifacts' / cfg.experiment.id
+    os.makedirs(exp_save_path, exist_ok=True)
+    
     fn_start = f"{cfg['experiment']['id']}_{cfg['experiment']['name']}_"
-    rm_files = [f for f in os.listdir(curr_path) if f[-3:] == 'pth' \
+    if 'sweep' in cfg.experiment and cfg.experiment.sweep:
+        fn_start += f'sweep-{cfg.experiment.sweep_id}_run-{wandb.run.id}'
+
+    # Remove previous best-score checkpoints
+    rm_files = [f for f in os.listdir(exp_save_path) if f[-3:] == 'pth' \
                 and fn_start in f]
     if rm_files:
         match_str = end
@@ -705,12 +789,12 @@ def save_model(cfg, state_dict, tracker, epoch, code_d):
             match_str = f'best-{subset}-{met_name}'
         for f in rm_files:
             if match_str in f:
-                rm_file = os.path.join(curr_path, f)
+                rm_file = os.path.join(exp_save_path, f)
                 print(f"Deleting file -x {f}")
                 os.remove(rm_file)
     
     filename = fn_start + f'ep{epoch}_' + end + '.pth'
-    save_path = os.path.join(curr_path, filename)
+    save_path = os.path.join(exp_save_path, filename)
     print(f"Saving model -> {filename}")
     torch.save({
         'state_dict': state_dict,
@@ -730,6 +814,19 @@ def mem():
     mem_map = devices.get_gpu_memory_map()
     prim_card_num = gpu_indices[0]
     return mem_map[prim_card_num]/1000
+
+
+def ram(disp=False):
+    """ Return (opt display) RAM usage of current process in megabytes. """
+    import os, psutil
+    process = psutil.Process(os.getpid())
+    bytes = process.memory_info().rss
+    mbytes = bytes // 1048576
+    sys_mbytes = psutil.virtual_memory().total // 1048576
+    if disp:
+        print(f'🖥️  Current process (id={os.getpid()}) '
+              f'RAM Usage: {mbytes:,} MBs / {sys_mbytes:,} Total MBs.')
+    return mbytes
 
 
 def synchronize():

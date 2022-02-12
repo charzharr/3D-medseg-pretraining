@@ -128,7 +128,7 @@ def get_optimizer(cfg, params):
     lr = cfg.train.optimizer.lr
     wdecay = cfg.train.optimizer.wt_decay
 
-    if 'adam' in opt:
+    if opt == 'adam':
         opt_cfg = cfg.train.optimizer.adam
         optimizer = torch.optim.Adam(
             params, 
@@ -137,6 +137,16 @@ def get_optimizer(cfg, params):
             betas=opt_cfg.betas
         )
         print(f'💠 Adam optimizer initiated with lr={lr}, wd={wdecay}, \n'
+              f'   betas={opt_cfg.betas}.')
+    elif opt == 'adamw':
+        opt_cfg = cfg.train.optimizer.adamw
+        optimizer = torch.optim.AdamW(
+            params, 
+            lr=lr, 
+            weight_decay=wdecay,
+            betas=opt_cfg.betas
+        )
+        print(f'💠 AdamW optimizer initiated with lr={lr}, wd={wdecay}, \n'
               f'   betas={opt_cfg.betas}.')
     elif 'nesterov' in opt:
         opt_cfg = cfg.train.optimizer.nesterov

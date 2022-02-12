@@ -149,7 +149,7 @@ class ConsistencyCosineDecay(BaseScheduler):
 
 
 class CosineDecay(BaseScheduler):
-    """ LR_t = min_lr + 0.5(1 + cos(pi*t/T)) * LR_0 """
+    """ LR_t+1 = max(min_lr, 0.5(1 + cos(pi*t/T)) * LR_t) """
     def __init__(self, optimizer, T, t=0, minlr=1e-8, rampup_rates=[]):
         self.T = T
         self.minlr = minlr
@@ -167,8 +167,8 @@ class CosineDecay(BaseScheduler):
         if self.rampup_rates:
             self.set_lr(self.rampup_rates.pop(0))
         else:
-            new_lr = self.minlr + 0.5 * (1 + math.cos(
-                math.pi * epoch / self.T)) * self.orig_lr
+            new_lr = max(self.minlr, 0.5 * (1 + math.cos(
+                math.pi * epoch / self.T)) * self.orig_lr)
             if new_lr != self.lr:
                 self.set_lr(new_lr)
 

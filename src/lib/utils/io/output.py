@@ -1,4 +1,5 @@
 
+import os, sys
 import warnings
 import logging
 import textwrap
@@ -15,6 +16,20 @@ OUT = set(('print', 'warning', 'log_debug', 'log_info', 'log_warning',
 #     'log_error': logging.error,
 #     'log_critical': logging.critical,
 # }
+
+class HidePrint:
+    def __init__(self, hide=True):
+        self._hide = hide
+        
+    def __enter__(self):
+        if self._hide:
+            self._original_stdout = sys.stdout
+            sys.stdout = open(os.devnull, 'w')
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self._hide:
+            sys.stdout.close()
+            sys.stdout = self._original_stdout
 
 
 def header_one(message, width=80, out='print'):
@@ -91,6 +106,7 @@ def parse_out(out):
     msg = f'Given out "{out}" is not valid. Choices: {OUT}.'
     assert out.lower() in OUT, msg
     return out
+
 
 
     

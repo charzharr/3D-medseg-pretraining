@@ -114,7 +114,7 @@ class ScaledForegroundCropper3d:
             #         samp_shape = torch.randint(min_shp, max_shp, (1,)).item()
             #         crop_shape.append(samp_shape)
 
-            scale_range = scale_range[0]
+            scale_range = list(scale_range)[0]
             if scale_range[0] == scale_range[1]:
                 crop_shape = [int(scale_range[0] * s) for s in final_shape]
             else:

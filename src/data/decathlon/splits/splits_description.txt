@@ -1,0 +1,5 @@
+MSD Spleen has 41 labeled examples:
+  > Main split is 80% train, 20% test (33 train, 8 test)
+     - FS10 (3 volumes) means 10% of labeled data is training 
+     - FS25 (8 volumes) means 10% of labeled data is training 
+     - FS50 (16 volumes) means 10% of labeled data is training 

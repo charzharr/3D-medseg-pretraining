@@ -16,8 +16,10 @@ import torch.nn.functional as F
 from lib.nets.basemodel import BaseModel
 
 
-activation = nn.LeakyReLU(negative_slope=0.01, inplace=True)
-norm = nn.InstanceNorm3d
+# activation = nn.LeakyReLU(negative_slope=0.01, inplace=True)
+# norm = nn.InstanceNorm3d
+activation = nn.ReLU(inplace=True)
+norm = nn.BatchNorm3d
 
 
 # ------------------ ##  3D UNet (from Model Genesis)  ## ------------------ #
@@ -111,6 +113,9 @@ class DecoderModule(nn.Module):
 class UNet3D(BaseModel):
     # the number of convolutions in each layer corresponds
     # to what is in the actual prototxt, not the intent
+    
+    # Modified 2021.11: changed 320 final conv channels to 300
+    
     def __init__(self, n_input=1, n_class=1, deep_sup=False):
         super(UNet3D, self).__init__()
 
@@ -143,7 +148,7 @@ class UNet3D(BaseModel):
         
         tot_params, tot_tparams = self.param_counts
         print(f'💠 nnUNet3D model initiated with n_classes={n_class}, \n'
-              f'   n_input={n_input}, \n'
+              f'   n_input={n_input}, deep_sup={deep_sup}\n'
               f'   params={tot_params:,}, trainable_params={tot_tparams:,}.')
 
     

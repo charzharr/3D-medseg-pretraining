@@ -1,0 +1,70 @@
+
+# Init Sweep: wandb sweep experiments/ftmmwhs/configs/sweep_dunet.yaml
+
+program: run_sweep.py
+name: dunet_swp-mmwhs-base
+project: miccai22_pretrain3d
+method: random
+metric:
+  goal: maximize
+  name: test_ep_dice_mean
+
+
+parameters:
+  # ## -- Set -- ##
+  sweep.model.name: 
+    value: 'denseunet3d' # ['nnunet3d', 'dvn3d', 'denseunet3d', 'unetr3d']
+
+  sweep.experiment.seed:
+    value: 520  # [0, 310, 319, 520, 617, 420, 69, 888]
+  sweep.train.epochs:
+    value: 200
+  sweep.train.optimizer.lr: 
+    values: [0.01, 0.05]
+  sweep.train.scheduler.name:
+    value: 'poly'
+  sweep.train.optimizer.name: 
+    value: 'adam'
+  sweep.train.optimizer.wt_decay:
+    value: 0
+  
+  sweep.train.patch_size:
+    value: [32, 192, 192]
+  
+  sweep.train.t_flip:
+    value: 0.25
+  sweep.train.t_intensity_scale: 
+    value: 0.25
+  sweep.train.t_gb:
+    value: 0.15
+  sweep.train.t_gamma: # 
+    value: 0.15
+  sweep.train.t_gn:
+    value: 0.
+
+  ## -- ⭐ Params under investigation ⭐ -- ##
+  sweep.train.deep_sup:
+    values: [0, 1]
+
+
+  # ## -- Official Run Settings -- ##
+  sweep.experiment.debug.mode:
+    value: False 
+  sweep.experiment.debug.overfitbatch:
+    value: False 
+  sweep.experiment.debug.break_train_iter:
+    value: False
+  sweep.experiment.debug.break_test_iter:
+    value: False
+  sweep.experiment.debug.test_every_n_epochs:
+    value: 1
+
+  
+
+
+# early_terminate:
+#   type: hyperband
+#   min_iter: 20
+#   eta: 2
+
+  

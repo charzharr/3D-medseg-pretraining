@@ -23,12 +23,13 @@ class WandBTracker:
         self.metrics_d = { k: [] for k in metric_names } if metric_names else {}
         if wandb_settings:
             self.use_wandb = True
-            self._setup_wandb(wandb_settings)
+            if isinstance(wandb_settings, dict):
+                self._setup_wandb(wandb_settings)
         else:
             self.use_wandb = False
     
     def update(self, metrics_d, log=False, summarize={}, verbose=False,
-               after_epoch=0, force_summarize=False):
+               after_epoch=0, force_summarize=False, step=None):
         summary_keys = []
         for k, item in metrics_d.items():
             if k not in self.metrics_d:
@@ -69,7 +70,10 @@ class WandBTracker:
 #                     'best_' + k: item, 'best_' + k + '_step': stepnum})
         
         if log and self.use_wandb:
-            wandb.log(metrics_d)
+            if step is not None:
+                wandb.log(metrics_d, step=step)
+            else:
+                wandb.log(metrics_d)
     
     def best(self, metric_name, max_better=True):
         if metric_name not in self.metrics_d:
@@ -157,14 +161,16 @@ class WandBTracker:
         cfg = wandb_settings['config']
         name = cfg['experiment']['id'] + '_' + cfg['experiment']['name']
         self.wandb_run_id = wandb.util.generate_id()
-        print("\t- ID: {self.wandb_run_id}  - Name: {name}")
+        print(f"\t- ID: {self.wandb_run_id}  - Name: {name}")
         wandb.init(
             id=self.wandb_run_id,
             resume='allow',
             project=wandb_settings['project'],
             name=wandb_settings['name'], 
             config=wandb_settings['config'],
-            notes=None if 'notes' not in wandb_settings else wandb_settings['notes']
+            notes=None if 'notes' not in wandb_settings else wandb_settings['notes'],
+            group=wandb_settings['group'] if 'group' in wandb_settings else None,
+            job_type=wandb_settings['job_type'] if 'job_type' in wandb_settings else None
         )
 
 
@@ -230,6 +236,8 @@ class EpochMetrics(dict):
                 v_string = f'{v:.4f}'
             elif isinstance(v, collections.Sequence):
                 v_string = f'{np.array(v)}'
+            else:
+                v_string = str(v)
             string += f'  {k: <21} {v_string}\n'
 
         if ret_string:

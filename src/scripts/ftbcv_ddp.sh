@@ -8,8 +8,8 @@
 #$ -pe smp 4             
 #$ -q long          
 
-#$ -q gpu@@csecri-titanxp  # gpu@@csecri-p100, gpu@@csecri-titanxp 
-#$ -l gpu_card=3
+#$ -q gpu@@csecri-p100  # gpu@@csecri-p100, gpu@@csecri-titanxp 
+#$ -l gpu_card=2
 
 
 export PROJ_PATH="/afs/crc.nd.edu/user/y/yzhang46/_3DPRE"

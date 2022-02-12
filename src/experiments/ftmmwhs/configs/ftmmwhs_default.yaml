@@ -1,0 +1,93 @@
+
+# ---- ##  Experiment Setup, Logging Specifications, Environment  ## ---- #
+experiment:
+  description: |
+    > (Default Description) BCV finetuning.
+    >   Data: 30 volumes of 13 abdominal structures.
+  id: "(monthday)experiment_data_optim_run"    # for easy wandb run IDing
+  name: 'ftbcv'   # for experiment module identification
+  project: '3DSeg-Pretrain'
+
+  debug:                                            # (Correct Alignment)
+    mode: False                                     # < Check
+    overfitbatch: False                             # < Check
+    wandb: True                                     # < Check
+    save: True                                      # < Check
+    break_train_iter: False                         # < Check
+    break_test_iter: False                          # < Check
+    test_every_n_epochs: 1
+  seed: 420
+  hpsamp: ""
+
+  checkpoint:
+    file: ''
+
+
+# ---- ##  Data Preprocessing, Loading, Transformation  ## ---- #
+
+data:  # describing project-wide data specifications
+  name: 'bcv'
+  bcv:
+    num_classes: 14
+    split: '60-20-20_1.csv'
+
+
+# Model / Criterion / Other nn.Module Specifications
+model:
+  name: 'resmednet3d'  # 'genesis_unet3d'  # gn_unet3d
+  init: 'kaiming'
+  sync_bn: False
+
+
+# ---- ##  Training: iterations, criterion, optimization, etc.  ## ---- #
+
+train:
+  start_epoch: 0
+  epochs: 100
+  batch_size: 2
+  examples_per_volume: 80
+  num_workers: 2
+
+  patch_size: [48, 160, 160]
+  fg_bias: 0.666
+  scale_range: 1.
+
+  criterion:
+    name: 'dice_ce_nnunet'
+    dice_ce_nnunet:
+      dc_kw:
+        do_bg: True
+        batch_dice: True
+        smooth: 1
+      ce_kw:
+        weights_key: 'bcv'
+    soft_dice_nnunet:
+      do_bg: null
+
+  optimizer:
+    name: 'adam'  # sgd, nesterov, adam
+    lr: .005
+    wt_decay: 0.0
+    adam:
+      betas: [0.9, 0.999]
+    sgd:
+      momentum: 0.9
+
+  scheduler:
+    name: 'step'
+    rampup_rates: []
+    min_lr: 0.000001
+    
+    step:
+      factor: 0.1
+      steps: [0.5, 0.8]
+    
+    exponential:
+      exp_factor: 0.95
+
+test:
+  batch_size: 3
+
+
+
+

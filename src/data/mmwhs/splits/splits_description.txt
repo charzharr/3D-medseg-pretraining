@@ -1,0 +1,5 @@
+MMWHS CT has 20 labeled examples:
+  > Main split is 80% train, 20% test (16 train, 4 test)
+     - FS10 (2 volumes) means 10% of labeled data is training 
+     - FS25 (4 volumes) means 10% of labeled data is training 
+     - FS50 (8 volumes) means 10% of labeled data is training 

@@ -1,0 +1,123 @@
+
+# ---- ##  Experiment Setup, Logging Specifications, Environment  ## ---- #
+experiment:
+  description: |
+    > MSD-Spleen segmentation finetuning.
+    >   Data: 41 labeled & 20 unlabeled (3 classes, 41 -> 32 train, 9 test)
+  id: "(0123_splnFS10-fix1_r2u101)z3-xyfix-nn_vs250_dsup_adamw-lr,001-cedc-cos_s1"     # for wandb run identification
+
+  name: 'ftspleen'   # for experiment module identification
+  project: 'miccai22_pretrain3d'
+
+  debug:                                            # (Correct Alignment)
+    mode: False                                     # < Check
+    overfitbatch: False                             # < Check
+    wandb: True                                     # < Check
+    save: False                                      # < Check
+    break_train_iter: False                         # < Check
+    break_test_iter: False                          # < Check
+    test_every_n_epochs: 1
+  seed: 420
+  hpsamp: ""
+  adjust_by_comp: False  # adjust training params based on specific components
+
+  checkpoint:
+    file: ''
+
+
+# ---- ##  Data Preprocessing, Loading, Transformation  ## ---- #
+
+data:  # describing project-wide data specifications
+  name: 'msd_spleen'
+  msd_spleen:
+    num_classes: 2  # including background
+    split: 'spleen_fs10_8-2_a.csv' # 41 total, 32 train + 9 test
+      # spleen_80-20.csv
+
+
+# Model / Criterion / Other nn.Module Specifications
+model:
+  name: 'res2unet3d'  # nnunet3d, hrnet3d, denseunet3d, unet3p3d, res2unet3d
+  init: 'kaiming'
+  sync_bn: True
+  norm: 'batchnorm'
+  act: 'relu'
+
+  denseunet3d:
+    layers: 201
+  hrnet3d:
+    cfg: 'seg_hrnetv2_w32.yaml'
+  res2unet3d:
+    layers: 101
+    base_width: 26  # default: 26
+
+
+# ---- ##  Training: iterations, criterion, optimization, etc.  ## ---- #
+
+train:
+  deep_sup: True
+
+  epochs: 100
+  start_epoch: 0
+  batch_size: 4   # subject to change based on model, deep_sup, crop size
+  examples_per_volume: 250  # 250 iterations per epoch (nnUNet)
+    # FS100: 50, FS50: 75, FS25: 100
+  num_workers: 3
+
+  patch_size: [64, 128, 128] # [64, 128, 128], [32, 160, 160]
+  fg_bias: 0.333
+  scale_range: [0.9, 1.1]
+  
+  t_flip: 0.25  # flip on all 3 axis
+  t_gn: 0.  # gaussian noise
+  t_gb: 0.15  # gaussian blur
+  t_intensity_scale: 0.25
+  t_gamma: 0.15
+
+  criterion:
+    name: 'dice_ce_nnunet'
+    dice_ce_nnunet:
+      dc_kw:
+        do_bg: True
+        batch_dice: True
+        smooth: 1.
+      ce_kw:
+        weights_key: ''  # 'bcv' # 'bcv_cbrt'
+    soft_dice_nnunet:
+      do_bg: null
+
+  optimizer:
+    name: 'adamw'
+    lr: 0.001  # 0.001 for fs100
+    wt_decay: 0.01
+    
+    nesterov:
+      momentum: 0.99
+    adam:
+      betas: [0.9, 0.999]
+    adamw:
+      betas: [0.9, 0.999]
+    sgd:
+      momentum: 0.9
+
+  scheduler:
+    name: 'cosine'
+    rampup_rates: []
+    min_lr: 0.000001
+    
+    poly:
+      power: 0.9
+
+    step:
+      factor: 0.2
+      steps: [0.3, 0.6, 0.9]
+    
+    exponential:
+      exp_factor: 0.95
+
+test:
+  batch_size: 4
+
+
+
+

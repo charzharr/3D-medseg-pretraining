@@ -111,7 +111,7 @@ class Gamma(Transform):
         assert isinstance(image, np.ndarray) or isinstance(image, torch.Tensor)
 
         # Apply gamma transform
-        image = (image - image_min) / (image_max - image_min)
+        image = (image - image_min) / (image_max - image_min + 1e-7)
         image = image ** gamma 
         image = image * (image_max - image_min) + image_min
         # print(image.shape, gamma, 'old', image_min, image_max, 'new', 

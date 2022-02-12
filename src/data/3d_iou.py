@@ -5,6 +5,7 @@ import numpy as np
 from scipy.spatial import ConvexHull
 from numpy import *
 
+
 def polygon_clip(subjectPolygon, clipPolygon):
    """ Clip a polygon with another polygon.
    Ref: https://rosettacode.org/wiki/Sutherland-Hodgman_polygon_clipping#Python
@@ -50,9 +51,11 @@ def polygon_clip(subjectPolygon, clipPolygon):
           return None
    return(outputList)
 
+
 def poly_area(x,y):
     """ Ref: http://stackoverflow.com/questions/24467972/calculate-area-of-polygon-given-x-y-coordinates """
     return 0.5*np.abs(np.dot(x,np.roll(y,1))-np.dot(y,np.roll(x,1)))
+
 
 def convex_hull_intersection(p1, p2):
     """ Compute area of two convex hull's intersection area.
@@ -66,6 +69,7 @@ def convex_hull_intersection(p1, p2):
     else:
         return None, 0.0  
 
+
 def box3d_vol(corners):
     ''' corners: (8,3) no assumption on axis direction '''
     a = np.sqrt(np.sum((corners[0,:] - corners[1,:])**2))
@@ -73,10 +77,12 @@ def box3d_vol(corners):
     c = np.sqrt(np.sum((corners[0,:] - corners[4,:])**2))
     return a*b*c
 
+
 def is_clockwise(p):
     x = p[:,0]
     y = p[:,1]
     return np.dot(x,np.roll(y,1))-np.dot(y,np.roll(x,1)) > 0
+
 
 def box3d_iou(corners1, corners2):
     ''' Compute 3D bounding box IoU.
@@ -106,6 +112,7 @@ def box3d_iou(corners1, corners2):
     vol2 = box3d_vol(corners2)
     iou = inter_vol / (vol1 + vol2 - inter_vol)
     return iou, iou_2d
+
 
 # ----------------------------------
 # Helper functions for evaluation
@@ -143,7 +150,9 @@ def get_3d_box(box_size, heading_angle, center):
 if __name__=='__main__':
     print('------------------')
     # get_3d_box(box_size, heading_angle, center)
-    corners_3d_ground  = get_3d_box((1.497255,1.644981, 3.628938), -1.531692, (2.882992 ,1.698800 ,20.785644)) 
-    corners_3d_predict = get_3d_box((1.458242, 1.604773, 3.707947), -1.549553, (2.756923, 1.661275, 20.943280 ))
+    corners_3d_ground  = get_3d_box((1.497255,1.644981, 3.628938), 
+                                    -1.531692, (2.882992 ,1.698800 ,20.785644)) 
+    corners_3d_predict = get_3d_box((1.458242, 1.604773, 3.707947), 
+                                    -1.549553, (2.756923, 1.661275, 20.943280 ))
     (IOU_3d,IOU_2d)=box3d_iou(corners_3d_predict,corners_3d_ground)
     print (IOU_3d,IOU_2d) #3d IoU/ 2d IoU of BEV(bird eye's view)

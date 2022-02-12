@@ -59,7 +59,17 @@ def get_config(filename, merge_default=True, search_dir=''):
         if 'hpsamp' in experiment_cfg['experiment']:
             hpsamp = experiment_cfg['experiment']['hpsamp']
     if hpsamp:
-        with open(hpsamp, 'r') as f:
+        if os.path.isfile(hpsamp):
+            hpsamp_file = hpsamp
+        else:  # look for config in search_dir
+            if not search_dir:
+                msg = ('If you give just a name for config file, then you must '
+                       'specify the directory to search in')
+                raise ValueError(msg)
+            hpsamp_file = os.path.join(search_dir, hpsamp)
+            msg = f'HpSamp file "{hpsamp_file}" not in ({search_dir})'
+            assert os.path.isfile(hpsamp_file), msg
+        with open(hpsamp_file, 'r') as f:
             hpsamp_cfg = yaml.safe_load(f)
         experiment_cfg = get_sampled_config(hpsamp_cfg, experiment_cfg)
     print(f" done.")

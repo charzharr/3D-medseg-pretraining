@@ -720,10 +720,10 @@ class UNet3Plus_DeepSup_CGM(nn.Module):
         self.relu1d_1 = nn.ReLU(inplace=True)
 
         # -------------Bilinear Upsampling--------------
-        self.upscore6 = nn.Upsample(scale_factor=32,mode='bilinear')###
-        self.upscore5 = nn.Upsample(scale_factor=16,mode='bilinear')
-        self.upscore4 = nn.Upsample(scale_factor=8,mode='bilinear')
-        self.upscore3 = nn.Upsample(scale_factor=4,mode='bilinear')
+        self.upscore6 = nn.Upsample(scale_factor=32, mode='bilinear')
+        self.upscore5 = nn.Upsample(scale_factor=16, mode='bilinear')
+        self.upscore4 = nn.Upsample(scale_factor=8, mode='bilinear')
+        self.upscore3 = nn.Upsample(scale_factor=4, mode='bilinear')
         self.upscore2 = nn.Upsample(scale_factor=2, mode='bilinear')
 
         # DeepSup
