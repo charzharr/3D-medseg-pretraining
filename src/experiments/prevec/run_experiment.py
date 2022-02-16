@@ -147,7 +147,8 @@ def run(rank, cfg, inference_metrics_queue):
         if cfg.tasks.prevec.loss == 'spherical':
             from experiments.prevec.prevec_losses import SphericalCriterion
             crit_prevec = SphericalCriterion(
-                r_loss='l1', angle_loss='l1',
+                r_loss=cfg.tasks.prevec.r_loss, 
+                angle_loss=cfg.tasks.prevec.ang_loss,
                 r_weight=1, theta_weight=1, phi_weight=1
             )
             crit_prevec = crit_prevec.to(device)
@@ -227,7 +228,8 @@ def run(rank, cfg, inference_metrics_queue):
             if 'prevec' in cfg.tasks.names:
                 # create labels
                 Y_prevec = create_prevec_targ(vectors, records,
-                    cfg.tasks.prevec.pred_indices).to(out.device)
+                    cfg).to(out.device)
+                # print('in train before crit called'); import IPython; IPython.embed(); 
                 loss_prevec_d = crit_prevec(out, Y_prevec)
                 loss += loss_prevec_d['loss']
                 loss_str += f'PrevecLoss {loss.item():.4f} '
@@ -289,7 +291,7 @@ def run(rank, cfg, inference_metrics_queue):
                 break
 
         out = None; out_d = None  # save mem for inference
-        del X; del Y_id; del loss  
+        del X; del loss  
 
         # -- Epoch Values -- #
         epoch_mets = statistics.EpochMetrics()
@@ -301,7 +303,7 @@ def run(rank, cfg, inference_metrics_queue):
 
         # Test + Epoch Metrics
         test_every_n = debug.test_every_n_epochs
-        if False and epoch % test_every_n == test_every_n - 1:
+        if epoch % test_every_n == test_every_n - 1:
             if rank == 0:
                 output.subsubsection('Test Metrics')
             N_test_exs = len(data_d['df'][data_d['df']['subset'] == 'test'])
@@ -311,10 +313,6 @@ def run(rank, cfg, inference_metrics_queue):
                 criterions=criterions)
             if rank == 0:
                 epoch_mets.update(test_mets, tracked_epmets, 'test_ep_')
-            
-            # output.subsubsection('Testing Metrics')
-            # test_mets = test_metrics(cfg, model, test_set, epoch, name='test')
-            # update_epoch_mets(test_mets, tracked_epmets, 'test_ep_')
         
         scheduler.step(epoch=epoch, value=0)
 
@@ -342,7 +340,6 @@ def run(rank, cfg, inference_metrics_queue):
 # ========================================================================== #
 
 
-
 def test_metrics(cfg, model, dataset, epoch, test_metrics_queue, 
                  num_examples, name='test', overlap_perc=0.2, criterions=None):
     """
@@ -359,6 +356,7 @@ def test_metrics(cfg, model, dataset, epoch, test_metrics_queue,
         if len(cfg.experiment.gpu_idxs) > 1:
             cba_device = f'cuda:{len(cfg.experiment.gpu_idxs) - 1}'
 
+    loss_accum, loss_norm = 0, 0
     WATCH.tic(name.title())
     epmeter = statistics.EpochMeters()
     with torch.no_grad():
@@ -373,16 +371,15 @@ def test_metrics(cfg, model, dataset, epoch, test_metrics_queue,
             example_d = dataset[i]
             sample = example_d['sample']
             image = example_d['tensor']
-            mask = example_d['mask_1h']  #  image: float32, mask: uint8
 
             samples.append(sample)
 
             # Create Chop-Batch-Aggregate inference helper
             test_batch_size = cfg.test.batch_size
-            num_classes = sample.mask.num_classes
+            num_classes = 1
             overlap = [int(overlap_perc * s) for s in cfg.train.patch_size]
             cba = CBA(image, cfg.train.patch_size, overlap, 
-                      test_batch_size, num_classes, device=cba_device)
+                      test_batch_size, num_classes, device='cpu')
             if cfg.experiment.rank == 0:
                 print(f'     Getting predictions for {len(cba)} batches.',
                       flush=True)
@@ -390,69 +387,57 @@ def test_metrics(cfg, model, dataset, epoch, test_metrics_queue,
             # pstart = time.time()
             for bidx, batch in enumerate(cba):
                 crops, locations = batch
+                B = len(locations)
+                
+                # create vectors & labels
+                vectors, records = [], []
+                for b in range(B):
+                    crop_lower, crop_upper = locations[b][:3], locations[b][3:]
+                    nine_points = [
+                        (crop_upper + crop_lower) / 2,  # patch center
+                        crop_lower,
+                        crop_upper,
+                        [crop_lower[0], crop_upper[1], crop_upper[2]],  # LR diag from lower
+                        [crop_upper[0], crop_lower[1], crop_lower[2]],  # UR diag upper
+                        [crop_lower[0], crop_lower[1], crop_upper[2]],
+                        [crop_upper[0], crop_upper[1], crop_lower[2]],
+                        [crop_lower[0], crop_upper[1], crop_lower[2]],
+                        [crop_upper[0], crop_lower[1], crop_upper[2]],
+                    ]
+                    from experiments.prevec.vector import Vector3d
+                    vol_patadj_center = [(crop_lower[0] + crop_upper[0]) / 2,
+                                         image.shape[1] / 2,
+                                         image.shape[2] / 2]
+                    vectors.append([Vector3d(pt, vol_patadj_center) 
+                                    for pt in nine_points])
+                records = [{
+                    'SpatialPretrainCropper3d': {
+                        'input_shape': image.shape,
+                        'input_volume_center': np.array(image.shape) / 2
+                    }
+                }] * len(locations)
+                Y = create_prevec_targ(vectors, records, cfg).to(device)
+                                
                 crops = crops.to(device)
                 out_d = model(crops)
                 logits = out_d['out'] if isinstance(out_d, dict) else out_d
-                cba.add_batch_predictions(logits, locations, act='none')
-            # print(f'Predict {time.time() - pstart:.2f} sec ({mem():.1f} GB).')
-
-            # Get final predictions, calculate metrics
-            # pstart = time.time()
-            del crops; del logits
-            agg_predictions = cba.aggregate(ret='1_hot', cpu=True, numpy=False)
-            # print(f'Agg {time.time() - pstart:.2f} sec')
-            
-            process = torch.multiprocessing.Process(target=test_metrics_worker,
-                args=(test_metrics_queue, agg_predictions.unsqueeze(0),
-                      mask.unsqueeze(0)))
-            process.daemon = True
-            process.start()
-            processes.append(process)
-            
-            if cfg.experiment.rank == 0:
-                elaps = WATCH.toc(f'{name}_iter', disp=False)
-                print(f'Completed inference for vol {i+1} ({elaps:.2f} sec).\n',
-                      flush=True)
-            WATCH.tic(f'{name}_iter')
-
-    # While last volume's metrics is computing, save sample
-    if cfg.experiment.rank == 0 and epoch % 10 == 1:  # saves last volume in set  
-        id_preds = agg_predictions.argmax(0).numpy().astype(np.uint16)
-        sitk_pred = sitk.GetImageFromArray(id_preds, isVector=False)
-        sitk_pred.SetOrigin(sample.mask.origin)
-        sitk_pred.SetSpacing(sample.mask.spacing)
-        sitk_pred.SetDirection(sample.mask.direction)
-
-        curr_path = pathlib.Path(__file__).parent.absolute()
-        filename = (f'{cfg.experiment.id}_ep{epoch}_lastex_'
-                    f'prediction.nii.gz')
-        save_path = os.path.join(curr_path, 'artifacts', filename)
-        print(f'Saving prediction as "{filename}" | Success.', flush=True)
-        sitk.WriteImage(sitk_pred, save_path)
+                
+                if criterions:
+                    for criterion in criterions:
+                        loss_d = criterion(logits, Y)
+                        loss = loss_d['loss'] if isinstance(loss_d, dict) else loss_d
+                        loss_accum += loss
+                        loss_norm += B
+            del crops; del logits 
 
     # Accumulate metrics & print results
-    metric_results = []
-    update_mets = ['dice_mean', 'jaccard_mean']
-    data_cfg = cfg.data[cfg.data.name]
-    for i in range(len(dataset)):
-        mets = test_metrics_queue.get()
-        metric_results.append(mets)
-        # print(f'Rank {cfg.experiment.rank} Res{i+1} {mets["dice_mean"]}')
-
-    for process in processes:
-        process.join()
-
-    for i, mets in enumerate(metric_results):
-        samp_id, samp_idx = samples[i].id, samples[i].index
-        epmeter.update({k: mets[k] for k in update_mets})
-        if cfg.experiment.rank == 0:
-            print(f'({name.title()}) Sample {samp_id}, idx={samp_idx} \n'
-                  f'       Dice: {float(mets["dice_mean"]):.2f} \n'
-                  f'        {mets["dice_class"]} \n'
-                  f'       Jaccard: {float(mets["jaccard_mean"]):.2f} \n'
-                  f'        {mets["jaccard_class"]}', flush=True) 
+    final_metrics_d = {'loss': loss_accum.item()}
+    if cfg.experiment.rank == 0:
+        print(f'({name.title()}) Epoch {epoch} total loss: '
+              f'{loss_accum.item():.4f}')
 
     if cfg.experiment.distributed:
+        raise NotImplementedError()
         torch.cuda.empty_cache()
         sum_dice = sum([d['dice_mean'] for d in metric_results])
         sum_jaccard = sum([d['jaccard_mean'] for d in metric_results])
@@ -474,24 +459,7 @@ def test_metrics(cfg, model, dataset, epoch, test_metrics_queue,
         return
 
     WATCH.toc(name.title(), disp=True)
-    return epmeter.avg()
-
-
-def test_metrics_worker(mp_metrics_queue, preds, targs):
-    """
-    Args:
-        mp_queue: multiprocessing queue where metrics results are put
-        preds: 1xCxDxHxW one-hot tensor 
-        targs: 1xCxDxHxW one-hot tensor 
-    """
-    # start = time.time()
-    # print(f'Worker got metrics! {preds.shape} {targs.shape}')
-    mets = batch_metrics(preds, targs)
-    # print(f'Metrics done! ({time.time() - start:.2f} sec)')
-    # print(mets["dice_mean"], mets["dice_all"])
-    # print(mp_metrics_queue, os.getpid())
-    mp_metrics_queue.put(mets)
-    # print(f'Successfully put in queue')
+    return final_metrics_d
 
 
 def save_model(cfg, state_dict, tracker, epoch, code_d):
@@ -544,30 +512,35 @@ def save_model(cfg, state_dict, tracker, epoch, code_d):
     )
 
 
-def create_prevec_targ(vectors, records, indices):
-    Y = torch.zeros(len(vectors), 3 * len(indices))
+def create_prevec_targ(vectors, records, cfg):
+    prevec_cfg = cfg.tasks.prevec
+    vec_indices = prevec_cfg.pred_indices
+    
+    Y = torch.zeros(len(vectors), 3 * len(vec_indices))
+    # Y[b] = [mag_v0, theta_v0, phi_v0, mag_v1, theta_v1, phi_v1, .... ]
     for b, (vecs, rec) in enumerate(zip(vectors, records)):
         vol_input_shape = rec['SpatialPretrainCropper3d']['input_shape']
         vol_center = rec['SpatialPretrainCropper3d']['input_volume_center']
-        radius = math.sqrt(sum([n ** 2 for n in vol_center]))
-        
-        for i in range(0, len(indices)):
-            vec = vecs[i]
-            Y[b, i * 3] = vec.magnitude / radius
+        radius = math.sqrt(sum([n ** 2 for n in vol_center[1:]]))
+                
+        for i, vi in enumerate(vec_indices):  
+            vec = vecs[vi]
+
+            rho = vec.magnitude
+            mag = rho / radius
+            assert mag >= 0, f'Magnitude: {rho}, Radius {radius} on {rec} {vec}'
+            if mag >= 1:
+                # print(f'Batch{b}-I{i} | Mag: {rho}, Radius {radius} on {rec} {vec}')
+                mag = 1
+            Y[b, i * 3] = mag
             
             theta = vec.theta
-            if theta > math.pi:
-                theta -= math.pi 
-            elif theta < 0:
-                theta += math.pi
-            Y[b, i * 3 +1] = theta / math.pi
+            assert 0 <= theta <= math.pi, f'Theta: {theta} on {rec} {vec}'
+            Y[b, i * 3 + 1] = theta / math.pi
             
-            phi = vec.phi
-            if phi > 2 * math.pi:
-                phi -= 2 * math.pi 
-            elif phi < 0:
-                phi += 2 * math.pi
-            Y[b, i * 3 +2] = phi / (2 * math.pi)
+            phi = vec.phi 
+            assert -math.pi <= phi <= math.pi, f'Phi: {phi} on {rec} {vec}'
+            Y[b, i * 3 + 2] = phi / math.pi
             # print(Y)
     return Y
 

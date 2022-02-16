@@ -68,23 +68,29 @@ class SphericalCriterion(torch.nn.Module):
         assert preds.ndim == 2
         assert preds.shape[-1] % 3 == 0
         
-        if logits:
-            preds = preds.sigmoid()
-        else:
-            assert 0. <= preds.min() <= preds.max() <= 1.
+        # if logits:
+        #     preds = preds.sigmoid()
+        # else:
+        #     assert 0. <= preds.min() <= preds.max() <= 1.
             
         B, N_vecs = preds.shape[0], preds.shape[-1] // 3
         
-        r_loss = self.r_w * self.r_criterion(preds[0::3], targs[0::3])
-        theta_loss = self.t_w * self.theta_criterion(preds[1::3], targs[1::3])
+        r_loss = self.r_w * self.r_criterion(preds[:, 0::3].sigmoid(), 
+                                             targs[:, 0::3])
+        theta_loss = self.t_w * self.theta_criterion(preds[:, 1::3].sigmoid(), 
+                                                     targs[:, 1::3])
         
+        # print('in crit'); import IPython; IPython.embed(); 
         phi_loss = 0
         for b in range(B):
-            for v in range(2, B, 3):
+            for v in range(2, preds.shape[-1], 3):
+                phi_pred = preds[b, v].tanh()
+                phi_targ = targs[b, v]
+                # print(f'Pred {phi_pred, phi_targ}')
                 phi_loss += min(
-                    self.phi_criterion(preds[b, v], targs[b, v]),
-                    self.phi_criterion(preds[b, v], targs[b, v] + 1),
-                    self.phi_criterion(preds[b, v], targs[b, v] - 1),
+                    self.phi_criterion(phi_pred, phi_targ),
+                    self.phi_criterion(phi_pred, phi_targ + 2),
+                    self.phi_criterion(phi_pred, phi_targ - 2),
                 )
         phi_loss = self.p_w * phi_loss / (B * N_vecs)
         

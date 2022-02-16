@@ -80,6 +80,11 @@ def rotate3d(volume_tensor, pivot_coords, mask=None, vectors=[],
                     else:
                         vec = vec.rotate_dim3(ang, pivot_coords=pivot_coords)
             out_vecs[i] = vec
+            
+    if not isinstance(out_tens, torch.Tensor):
+        out_tens = torch.tensor(out_tens)
+    if out_mask is not None and not isinstance(out_mask, torch.Tensor):
+        out_mask = torch.tensor(out_mask)
     return {
         'image': out_tens,
         'mask': out_mask,

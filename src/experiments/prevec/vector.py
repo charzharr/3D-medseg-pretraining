@@ -64,7 +64,10 @@ class Vector3d:
     @property
     def theta(self):
         """ 'θ' or polar angle in spherical coordinates. 
-        Returns: θ in radians.
+        Returns: radians angle = arccos(z / rho) ∈ [0, π] (uses math.acos)
+        
+        For Visualization:
+        https://upload.wikimedia.org/wikipedia/commons/thumb/a/a2/Kugelkoord-lokale-Basis-s.svg/480px-Kugelkoord-lokale-Basis-s.svg.png
         """
         if self.magnitude < epsilon:
             return 0
@@ -72,7 +75,12 @@ class Vector3d:
     
     @property
     def phi(self):
-        """ 'φ' or azimuthal angle in spherical coordinates. """
+        """ 'φ' or azimuthal angle in spherical coordinates. 
+        Returns: radians angle = arctan(y / x) ∈ [-π, π] (uses math.atan2)
+        
+        For Visualization:
+        https://upload.wikimedia.org/wikipedia/commons/thumb/a/a2/Kugelkoord-lokale-Basis-s.svg/480px-Kugelkoord-lokale-Basis-s.svg.png
+        """
         if self.magnitude < epsilon:
             return 0
         return math.atan2((self.end[1] - self.start[1]), 
@@ -81,7 +89,7 @@ class Vector3d:
     @property
     def rho(self):
         """ 'ρ' """
-        return math.sqrt((self.end[0] - self.start[0]) **2 + 
+        return math.sqrt((self.end[0] - self.start[0]) ** 2 + 
                          (self.end[1] - self.start[1]) ** 2)
     
     @property

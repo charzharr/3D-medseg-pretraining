@@ -45,7 +45,11 @@ def get_model(config, class_bal_bias=False):
                                    deep_sup=False)
         
         from experiments.prevec.models.prevec_model import PreVecV1
-        model = PreVecV1(config, model, 3 * 9)
+        n_classes = 3 * len(config.tasks.prevec.pred_indices) 
+        if config.tasks.prevec.pred_mag:
+            n_classes += len(config.tasks.prevec.pred_indices)
+        print(f' (get_model) n_cls={n_classes}, {config.tasks.prevec}')
+        model = PreVecV1(config, model, n_classes)
     elif config.model.name == 'denseunet3d':
         from lib.nets.volumetric.denseunet3d import get_model as get_dunet
         model = get_dunet(config.model.denseunet3d.layers, 
