@@ -16,6 +16,12 @@ from data.transforms.resize import Resize3d
 
 
 def crop_3d(image, lower, upper):
+    """
+    Args:
+        image (tensor or ndarray): 3D image of size DxHxW
+        lower (3d coordinate): (x, y, z) of lower crop bound
+        upper (3d coordinate): (x, y, z) of upper crop bound
+    """
     shape = image.shape
     assert len(shape) == 3, f'Image must have 3 dims: DxHxW, gave: {shape}'
     
@@ -33,7 +39,13 @@ def crop_3d(image, lower, upper):
     
 def crop_resize_3d(image, lower, upper, final_shape, 
                    resize_transform=None, interpolation=None):
-    assert isinstance(image, torch.Tensor), 'For now, only tensors supported.'
+    """
+    Args:
+        image (tensor or ndarray): 3D image of size DxHxW
+        lower (3d coordinate): (x, y, z) of lower crop bound
+        upper (3d coordinate): (x, y, z) of upper crop bound
+        final_shape (3d shape): DxHxW to resize crop to
+    """
     if resize_transform is not None:
         assert isinstance(resize_transform, Resize3d)
     

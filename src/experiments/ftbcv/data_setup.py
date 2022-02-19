@@ -48,6 +48,9 @@ weights_d = {
        24.56992877])
 }
 
+SPACING = [0.76, 0.76, 3]   # WxHxD
+NAME = 'bcv'
+
 
 # ------ ##   Main API from run_experiment()  ## ------ #
 
@@ -100,9 +103,17 @@ def get_data_components(cfg):
 
     # 2. Create master list of samples (threading?) & SampleSet
     start = time.time()
+    
+    if 'spacing' in cfg.data.mmwhs:
+        SPACING = cfg.data.mmwhs.spacing
+        print(f'🖼️  ({NAME}) Using config spacing (WxHxD): {SPACING}')
+    else:
+        print(f'🖼️  ({NAME}) Using default spacing (WxHxD): {SPACING}')
+    
     sample_args = []
     for i, S in pd.concat([train_df, val_df, test_df]).iterrows():
-        sample_args.append((i, S['id'], S['image'], S['mask'], S['imgsize'],
+        sample_args.append((SPACING, 
+                            i, S['id'], S['image'], S['mask'], S['imgsize'],
                             S['subset']))
         if cfg.experiment.debug.mode and i == 10:
             break
@@ -163,7 +174,7 @@ def get_data_components(cfg):
 def _get_sample(args):
     """ Called by get_data_components() to load samples in a parallel manner."""
     start = time.time()
-    index, id, image, mask, size, subset = args
+    spacing, index, id, image, mask, size, subset = args
     class_names = _get_class_names('bcv')
     class_vals = list(range(len(class_names)))
     

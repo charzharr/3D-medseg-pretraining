@@ -163,12 +163,14 @@ def run(rank, cfg, inference_metrics_queue):
     # Data Pipeline
     if rank == 0:
         output.header_three('Data Setup')
-    from experiments.prevec.data_setup import get_mmwhs_data, get_bcv_data
-    
     if cfg.data.name == 'mmwhs':
-        data_d = get_mmwhs_data(cfg)
+        from experiments.prevec.data_setup import get_mmwhs_data_components
+        data_d = get_mmwhs_data_components(cfg)
+    elif cfg.data.name == 'pretrain':
+        from experiments.prevec.data_setup import get_pretrain_data_components
+        data_d = get_pretrain_data_components(cfg)
     else:
-        assert False
+       assert False, 'Config data name invalid: {cfg.data.name}.'
     
     train_df = data_d['train_df']
     train_set = data_d['train_set']

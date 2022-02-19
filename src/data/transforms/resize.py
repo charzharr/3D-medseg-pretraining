@@ -111,9 +111,7 @@ class Resize3d(Transform):
     
          
     @staticmethod
-    def resize(image, size, interpolation):
-        assert isinstance(image, torch.Tensor), 'Only tensors supported.'
-        
+    def resize(image, size, interpolation):        
         if size == image.shape[-3:]:
             return image
 
@@ -121,32 +119,51 @@ class Resize3d(Transform):
             # print('apply mask', image.shape)
             return resize_segmentation3d(image, size[-3:])
 
-        shape = image.shape
-        if image.ndim == 4:
-            msg = ('If you give Resize3D a 4 dim tensor, then dim 1 must be '
-                   f'1 (shape=1xDxHxW, instead of {shape}).')
-            assert shape[0] == 1, msg
+        if isinstance(image, torch.Tensor):
+            shape = image.shape
+            if image.ndim == 4:
+                msg = ('If you give Resize3D a 4 dim tensor, then dim 1 must be '
+                    f'1 (shape=1xDxHxW, instead of {shape}).')
+                assert shape[0] == 1, msg
+            else:
+                image = image.unsqueeze(0).unsqueeze(0)
+            
+            dtype = image.dtype
+            if 'float' not in str(dtype):
+                image = image.float()
+            
+            align_applies = 'linear' in interpolation or interpolation == 'bicubic'
+            ret_image = torch.nn.functional.interpolate(  
+                image,
+                size=size,
+                mode=interpolation,
+                align_corners=False if align_applies else None   # damn warning.
+            )
+            
+            if ret_image.dtype != dtype:
+                ret_image = ret_image.to(dtype)
+            
+            if len(shape) == 4:
+                return ret_image
+            return ret_image.squeeze(0).squeeze(0)
+        
         else:
-            image = image.unsqueeze(0).unsqueeze(0)
-        
-        dtype = image.dtype
-        if 'float' not in str(dtype):
-            image = image.float()
-        
-        align_applies = 'linear' in interpolation or interpolation == 'bicubic'
-        ret_image = torch.nn.functional.interpolate(  
-            image,
-            size=size,
-            mode=interpolation,
-            align_corners=False if align_applies else None   # damn warning.
-        )
-        
-        if ret_image.dtype != dtype:
-            ret_image = ret_image.to(dtype)
-        
-        if len(shape) == 4:
+            assert isinstance(image, np.ndarray)
+            
+            dtype = image.dtype
+            
+            order = 0
+            if 'linear' in interpolation:
+                order = 1
+            elif 'cubic' in interpolation:
+                order = 2
+            ret_image = resize(image, size, order=order)
+            print(f'🏗️ DEBUG: order={order}, img_max={image.max()}, ret_img_max={ret_image.max()}')
+            
+            if ret_image.dtype != dtype:
+                ret_image = ret_image.astype(dtype)
+                
             return ret_image
-        return ret_image.squeeze(0).squeeze(0)
 
 
     def _parse_size(self, size):

@@ -502,6 +502,8 @@ def get_model(cfg, class_bal_bias=False):
             filepath = str(curr_path / filename)
         elif (curr_path / 'artifacts' / filename).exists():
             filepath = str(curr_path / 'artifacts' / filename)
+        elif (curr_path.parent / 'prevec' / 'artifacts' / filename):
+            filepath = str(curr_path.parent / 'prevec' / 'artifacts' / filename)
         else:
             filepath = None
             print(f'Give filename {filename} could not be found.')
@@ -509,7 +511,19 @@ def get_model(cfg, class_bal_bias=False):
         if filepath:
             checkpoint_d = torch.load(filepath, map_location='cpu')
             state_dict = checkpoint_d['state_dict']
-            print(model.load_state_dict(state_dict))
+
+            from collections import OrderedDict
+            compat_state_dict = OrderedDict()
+            for k, v in state_dict.items():
+                if 'backbone'in k:
+                    new_k = k.replace('backbone.','')
+                    if new_k[:10] == 'final_conv':
+                        continue
+                    compat_state_dict[new_k] = v 
+
+            print(model.load_state_dict(compat_state_dict, strict=False))
+
+
     elif 'cotr' not in cfg.model.name and 'unetr' != cfg.model.name: 
         # Initialize
         init_type = cfg.model.init
@@ -523,6 +537,7 @@ def get_model(cfg, class_bal_bias=False):
                 model.out_tr.final_conv.bias = final_biases
             print(f'   (Model) Initialized last layer biases of Genesis-3DUnet to '
                   f'{model.out_tr.final_conv.bias}')
+
 
     return {
         'model': model

@@ -1,18 +1,22 @@
-""" cropper.py  (Author: Charley Zhang, 2022)
+""" transforms/crops/scaled_uniform_noair_crop.py  (Author: Charley Zhang, 2021)
 
-Made specifically for 3D spatial pretraining tasks.
-ScaledUniformCrop from crop transforms does not support the following
-functionality, so I added them:
-  - Non-square crops & retain cubic crops
-  - Discrete scales to select from
-  - Exact edge point & volume information for vector prediction pretext task.
+Practically the same as ScaledUniformCrop3d except there is a lower bound 
+threshold for the mean of a crop to pass to be valid (avoid air in scans).
+
+UniformCrop from torchio is way too slow and has very stringent input 
+requirements. This class works directly with tensors or array and is much 
+faster & easily configurable. 
+
+Changes:
+    - Added scale_sampler like all modern croppers
+    - Added numpy support in addition to tensor
 """
 
 import math
 import warnings
+
 import numpy as np
 import torch
-from collections import Sequence
 
 if __name__ == '__main__':
     import sys, pathlib
@@ -25,13 +29,17 @@ from data.transforms.crops.utils import sample_crop, crop_resize_3d
 from experiments.prevec.sampler import ValueSampler
 
 
-class SpatialPretrainCropper3d:
+DEBUG = True  # save rejected crops
+
+
+class ScaledUniformNoAirCropper3d:
     
     def __init__(
             self, 
             final_shape=None, 
             scale_sampler=None, 
             cubic_crop=True,
+            min_mean_thresh=None,
             interpolation='trilinear',
             return_record=True
             ):
@@ -39,32 +47,37 @@ class SpatialPretrainCropper3d:
         Args:
             final_shape: shape of fine crop after scaled window is resized.
             scale_sampler: object with a sample() function that returns a scale.
+            min_mean_thresh: value threshold of air so that if the average value
+                of a crop is below this, then it is rejected.
         """
-        if scale_sampler:
-            assert isinstance(scale_sampler, ValueSampler)
-        assert len(final_shape) == 3, 'Shape must be 3D'
-        
+        if final_shape is not None:
+            assert len(final_shape) == 3, 'Shape must be 3D'
         self.final_shape = final_shape
         self.scale_sampler = scale_sampler
         self.cubic_crop = cubic_crop
+        self.min_mean_thresh = min_mean_thresh
         self.interpolation = interpolation
         self.return_record = parse_bool(return_record, 'return_record')
     
+    
     def __call__(
             self,
-            volume_tensor,       # data in (DxHxW)
-            mask=None,           # opt data in (DxHxW)
-            n_times=1,           # opt #crops to extract
-            final_shape=None,    # override init
-            scale_sampler=None,  # override init
-            cubic_crop=None,     # override init
-            interpolation=None   # override init
+            volume,
+            mask=None,
+            n_times=1,
+            final_shape=None,     # override init
+            scale_sampler=None,   # override init
+            cubic_crop=None,      # override init
+            min_mean_thresh=None, # override init
+            interpolation=None    # override init
             ):
+        assert isinstance(volume, (torch.Tensor, np.ndarray))
         
         # Get crop parameters
         if final_shape is None:
             final_shape = self.final_shape
-        assert len(final_shape) == 3
+        else:
+            assert len(final_shape) == 3, 'final_shape must be 3D'
         
         if scale_sampler is None:
             scale_sampler = self.scale_sampler
@@ -73,21 +86,27 @@ class SpatialPretrainCropper3d:
         if cubic_crop is None:
             cubic_crop = self.cubic_crop
         cubic_crop = parse_bool(cubic_crop, 'cubic_crop')
-            
+        
+        if min_mean_thresh is None:
+            min_mean_thresh = self.min_mean_thresh
+        
         if interpolation is None:
             interpolation = self.interpolation
         
-        volume_shape = volume_tensor.shape
+        volume_shape = volume.shape
         D, H, W = volume_shape
         ndim = len(volume_shape)
         
-        # Apply transform to inputs
         image_crop_record_list = []
         if mask is not None:
+            assert isinstance(mask, (torch.Tensor, np.ndarray))
             mask_crop_record_list = []
         
-        for n in range(n_times):
+        # Apply transform to inputs
+        n_valid_crops = 0
+        while n_valid_crops < n_times:
             
+            # Get crop upper & lower bounding coordinates
             if cubic_crop:  # same scale for all dims
                 dim_scale = scale_sampler.sample()
                 _d = int(dim_scale * final_shape[0])
@@ -116,43 +135,28 @@ class SpatialPretrainCropper3d:
             assert 3 == sum([c <= s for c, s in zip(crop_shape, volume_shape)])
             
             crop_lower, crop_upper = sample_crop(volume_shape, crop_shape)
-            resized_crop = crop_resize_3d(volume_tensor, crop_lower, crop_upper, 
+            
+            # Get resized crop & check validity
+            resized_crop = crop_resize_3d(volume, crop_lower, crop_upper, 
                                           final_shape, 
                                           interpolation=interpolation)
+            if min_mean_thresh is not None:
+                if resized_crop.mean() < min_mean_thresh:
+                    print(f'🏗️  Crop rejected with mean {resized_crop.mean()}')
+                    print(f'    Lower: {crop_lower}, Upper: {crop_upper}')
+                    continue  # if not valid, sample another one
+            
+            n_valid_crops += 1
+            
+            # Record creation
             if self.return_record:
-                # info for vector prediction
-                inpvol_center = [s / 2 for s in volume_tensor.shape]
-                outpat_center = [(p1 + p2) / 2 for p1, p2 in 
-                                 zip(crop_lower, crop_upper)]
-                vol_patadj_center = [outpat_center[0], inpvol_center[1],
-                                     inpvol_center[2]]
-                nine_points = [
-                    outpat_center,  # patch center
-                    crop_lower,
-                    crop_upper,
-                    [crop_lower[0], crop_upper[1], crop_upper[2]],  # LR diag from lower
-                    [crop_upper[0], crop_lower[1], crop_lower[2]],  # UR diag upper
-                    [crop_lower[0], crop_lower[1], crop_upper[2]],
-                    [crop_upper[0], crop_upper[1], crop_lower[2]],
-                    [crop_lower[0], crop_upper[1], crop_lower[2]],
-                    [crop_upper[0], crop_lower[1], crop_upper[2]],
-                ]
-                from experiments.prevec.vector import Vector3d
-                nine_vectors = [Vector3d(pt, vol_patadj_center) 
-                                for pt in nine_points]
-                
                 record = {
-                    'input_shape': tuple(volume_tensor.shape),
+                    'input_shape': tuple(volume.shape),
                     'output_shape': tuple(resized_crop.shape),
                     'interpolation': interpolation,
-                    'final_crop_lower': tuple(crop_lower),
-                    'final_crop_upper': tuple(crop_upper),
-                    'final_crop_shape': tuple(crop_shape),
-                    'input_volume_center': inpvol_center,
-                    'input_volume_patchadjusted_center': vol_patadj_center,
-                    'final_crop_center': outpat_center,
-                    'final_crop_points': nine_points,
-                    'final_crop_vectors': nine_vectors
+                    'init_crop_lower': tuple(crop_lower),
+                    'init_crop_upper': tuple(crop_upper),
+                    'init_crop_shape': tuple(crop_shape)
                 }
                 image_crop_record_list.append((resized_crop, record))
             else:
@@ -163,12 +167,12 @@ class SpatialPretrainCropper3d:
                                 final_shape, interpolation='nearest')
                 if self.return_record:
                     mask_record = {
-                        'input_shape': tuple(volume_tensor.shape),
+                        'input_shape': tuple(volume.shape),
                         'output_shape': tuple(resized_crop.shape),
                         'interpolation': 'nearest',
-                        'final_crop_lower': tuple(crop_lower),
-                        'final_crop_upper': tuple(crop_upper),
-                        'final_crop_shape': tuple(crop_shape)
+                        'init_crop_lower': tuple(crop_lower),
+                        'init_crop_upper': tuple(crop_upper),
+                        'init_crop_shape': tuple(crop_shape)
                     }
                     mask_crop_record_list.append((resized_mask, mask_record))
                 else:
@@ -186,8 +190,8 @@ class SpatialPretrainCropper3d:
     
     
     def reapply(self, image, record, interpolation=None):
-        crop_lower = record['final_crop_lower']
-        crop_upper = record['final_crop_upper']
+        crop_lower = record['init_crop_lower']
+        crop_upper = record['init_crop_upper']
         final_shape = record['output_shape']
         
         if interpolation is None:
@@ -210,18 +214,14 @@ class SpatialPretrainCropper3d:
     def _parse_scale_range(self, value):
         return Transform.parse_dimensional_ranges(value, 3, 'scale_range',
                                                   min_constraint=0)
-
-
+        
 
 if __name__ == '__main__':
-    cropper = SpatialPretrainCropper3d((16, 96, 96), scale_range=(0.5, 1.5))
     
-    D, H, W = 256, 256, 256
-    image = torch.randn((D, H, W))
+    cropper = ScaledUniformNoAirCropper3d((16, 96, 96), scale_range=(0.5, 1.5))
     
-    scale_sampler = ValueSampler(is_discrete=True, scales=[1.])
-    crops_y_records = cropper(image, scale_sampler=scale_sampler, 
-                              cubic=True, n_times=1)
+    image = torch.randn((100, 512, 512))
+    crops_y_records = cropper(image, n_times=1)
     
     import IPython; IPython.embed(); 
 

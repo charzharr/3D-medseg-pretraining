@@ -1,30 +1,23 @@
-""" Module pgl/data_setup.py
+""" Module pretrain_data_setup.py (By: Charley Zhang, 2022)
 
 Main Jobs:
-- Collect the default dfs from the datasets we plan on using.
-- Curate the data samples from each data set into a pretraining set
-    - Downstream fine-tuning and evaluation will be done via the finetune exp.
-- Create the samples, datasets, and patch loaders for fast training.
+- collect(): collect the default dfs from BCV, MMWHS, MSD Liver, and MSD Lung
+    as well as their non-preloaded samples.
+- actual dataloading will take place in respective experiment-specific
+    data setups. 
 
-Implementation Details:
+Data Details:
 - Original PGL used 1808 CT scans from 5 public datasets
     660 from RibFrac + 1148 from subsets of MSD Hepatic Vessel, Colon Tumor,
         Pancreas, & Lung Tumor
-- Preprocessing:
-    (1) [-1024, +325]HU clip
-    (2) Subtract mean, divide by std.
-    (3) Patch crops of size 16 × 96 × 96
-
-Our Pretraining (~1400 tot volumes, 1029 training):
-    MSD Hepatic  Vessel, Pancreas, Lung Tumor | Liver, Spleen
-    KiTS Kidney
-Our Fine-Tuning
-    MM-WHS Cardiac Segmentation (20 labeled)
-    BCV (30 labeled volumes)
-    MSD Colon Tumor (126 labeled volumes)
-
+- Our Isotropic Pretraining (231 training volumes):
+    *MMWHS (16 training)
+    *BCV (21 training)
+    MSD Liver (131 training)
+    MSD Lung (63 training)
 """
 
+import os, pathlib
 import logging
 import time
 import collections
@@ -43,13 +36,13 @@ from dmt.data import OneToManyLoader
 
 import data.transforms as myT
 from data.kits19.dataset import get_df as get_kits_df
-from data.decathlon.dataset import get_dfs as get_msd_dfs
 from data.transforms.crops.scaled_overlap_crop import ScaledOverlapCropper3d
 from data.transforms.crops.scaled_uniform_crop import ScaledUniformCropper3d
 
 
-dataset_normalize = {
-    'kits': {'spacing': 0.78, 'clip': [-79, 304], 'norm': [100.93, 76.9]},
+dataset_normalize = {   # spacing in W, H, D dims
+    'kits': {'spacing': [0.78, 0.78, 3], 'clip': [-79, 304], 
+             'norm': [100.93, 76.9]},
     'msd': {
         'Liver': {'spacing': 1, 'clip': [-17, 201], 
                   'norm': [99.4, 39.36]},
@@ -67,23 +60,35 @@ dataset_normalize = {
 }
 
 
-
 # ------ ##   Main API from run_experiment()  ## ------ #
 
-def get_data_components(cfg):
+def get_df_samples(cfg):
     import time; start = time.time();
 
     # 1. Collect the dfs & process them into 1
-    kits_df = get_kits_df()
-    kits_df['dataset'] = 'kits'
-
-    msd_include_tasks = ['HepaticVessel', 'Pancreas', 'Lung', 'Liver']
+    curr_path = pathlib.Path(__file__).parent
+    
+    from data.bcv.dataset import get_df as get_bcv_df
+    from data.bcv.dataset import DATASET_DIR as bcv_dataset_path
+    from data.utils import correct_df_directories
+    bcv_df_path = curr_path.parent / 'data/bcv/splits' / 'cotr70-30_fs100.csv'
+    bcv_df = pd.read_csv(bcv_df_path)
+    bcv_df = correct_df_directories(bcv_df, bcv_dataset_path)
+    bcv_df['dataset'] = 'bcv'
+    
+    from data.mmwhs.dataset import get_df as get_mmwhs_df
+    whs_df_path = curr_path.parent / 'data' / 'mmwhs' / 'splits' / 'lab_df.csv'
+    mmwhs_df = pd.read_csv(whs_df_path)
+    mmwhs_df['dataset'] = 'mmwhs'
+    
+    from data.decathlon.dataset import get_dfs as get_msd_dfs
+    msd_include_tasks = ['Lung', 'Liver']
     msd_dfs = get_msd_dfs()  # dict of dfs
     msd_df_list = [msd_dfs[k] for k in msd_dfs if k in msd_include_tasks]
     for df in msd_df_list:
         df['dataset'] = 'msd'
-
-    pretrain_df = pd.concat([kits_df] + msd_df_list)
+        
+    pretrain_df = pd.concat([bcv_df, mmwhs_df] + msd_df_list)
     pretrain_df = pretrain_df[pretrain_df['subset'] == 'train']
     if 'Unnamed: 0' in pretrain_df:
         pretrain_df = pretrain_df.drop(labels='Unnamed: 0', axis=1)
@@ -108,8 +113,15 @@ def get_data_components(cfg):
         sample_args.append((i, S['id'], S['image'], S['mask'], S['imgsize'],
                             S['subset'], S['dataset'], S['task']))
     with ThreadPool() as pool:
-        samples = pool.map(_get_sample, sample_args)
-        
+        samples = pool.map(_get_pretrain_sample, sample_args)
+    
+    print(f'[Took {time.time() - start:.2f} sec for {len(samples)} samples.]')
+    
+    return {
+        'df': pretrain_df,
+        'samples': samples
+    }
+    
     train_set = PreprocessSampleSet(cfg, samples)
     print(f'[Took {time.time() - start:.2f} sec.]')
     
@@ -141,7 +153,7 @@ def get_data_components(cfg):
     }
 
 
-def _get_sample(args):
+def _get_pretrain_sample(args):
     """ Called by get_data_components() to load samples in a parallel manner."""
     index, id, image, mask, size, subset, dataset, task = args
     class_names = _get_class_names(dataset, task)
@@ -174,6 +186,9 @@ def _get_class_names(dataset, task=None):
         from data.decathlon.dataset import TASKS, CLASSES_D
         assert task is not None and task in TASKS
         return CLASSES_D[task]
+    elif dataset == 'mmwhs':
+        from data.mmwhs.dataset import CLASSES
+        return CLASSES
     
     raise ValueError(f'Given dataset "{dataset}" is invalid.')
 

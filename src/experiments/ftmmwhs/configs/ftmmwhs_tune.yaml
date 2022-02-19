@@ -2,10 +2,9 @@
 # ---- ##  Experiment Setup, Logging Specifications, Environment  ## ---- #
 experiment:
   description: |
-    > MMWHS (16 train, 4 test) segmentation finetuning.
-    >   Goal: See if reduced LR will help + faster training.
-    >     Also, see if 1 spacing performance compared to 0.625.
-  id: "(0219_whsFS10-1mm_r2unet101)vs500_dsup+batchdice_cedc-adamw,001-wd,0001-cos_r1"     # for wandb run identification
+    > MMWHS segmentation finetuning.
+    >   Data: 20 volumes of 7 heart structures (16 train, 4 test).
+  id: "(0217_whsFS10_res2unet101)vs800_dsup+batchdice_cedc-adamw,01-cos_r1"     # for wandb run identification
 
   name: 'ftmmwhs'   # for experiment module identification
   project: 'miccai22_pretrain3d'
@@ -23,7 +22,7 @@ experiment:
   adjust_by_comp: False  # adjust training params based on specific components
 
   checkpoint:
-    file: ''
+    file: '(0216_r2u101_pretr_CV+1)flip_vs100_adamw,005-cos_r1/(0216_r2u101_pretr_CV+1)flip_vs100_adamw,005-cos_r1_prevec_ep79_best-train-loss-0.349.pth'
 
 
 # ---- ##  Data Preprocessing, Loading, Transformation  ## ---- #
@@ -34,7 +33,6 @@ data:  # describing project-wide data specifications
     num_classes: 8  # including background
     split: 'fs10_8-2_a.csv'  # 'lab_df.csv' 'fs50_8-2_a.csv'
       # 16 train, 4 test | 
-    spacing: [1,1,1]  # WxHxD (reversed from pytorch dims)
 
 # Model / Criterion / Other nn.Module Specifications
 model:
@@ -60,7 +58,7 @@ train:
   epochs: 100
   start_epoch: 0
   batch_size: 4   # subject to change based on model, deep_sup, crop size
-  examples_per_volume: 500  # 250, 250 iterations per epoch (nnUNet)
+  examples_per_volume: 800  # 250, 250 iterations per epoch (nnUNet)
     # for fs100: 100, fs25: 150
   num_workers: 3
 
@@ -88,8 +86,8 @@ train:
 
   optimizer:
     name: 'adamw'
-    lr: 0.001  # usually 0.01 for FS50 & above
-    wt_decay: 0.0001
+    lr: 0.01  # usually 0.01 for FS50 & above
+    wt_decay: 0.01
     
     nesterov:
       momentum: 0.99

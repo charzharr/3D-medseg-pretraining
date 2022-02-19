@@ -36,6 +36,9 @@ weights_d = {
     'mmwhs': torch.tensor([1, 1, 1, 1, 1, 1, 1, 1])
 }
 
+SPACING = [0.625, 0.625, 0.625]   # WxHxD
+NAME = 'mmwhs'
+
 
 # ------ ##   Main API from run_experiment()  ## ------ #
 
@@ -90,9 +93,17 @@ def get_data_components(cfg, get_samples_only=False):
     
     # 2. Create master list of samples & SampleSet
     start = time.time()
+    
+    if 'spacing' in cfg.data.mmwhs:
+        SPACING = cfg.data.mmwhs.spacing
+        print(f'🖼️  ({NAME}) Using config spacing (WxHxD): {SPACING}')
+    else:
+        print(f'🖼️  ({NAME}) Using default spacing (WxHxD): {SPACING}')
+    
     sample_args = []
     for i, S in pd.concat([train_df, test_df]).iterrows():
-        sample_args.append((i, S['id'], S['image'], S['mask'], S['imgsize'],
+        sample_args.append((SPACING, 
+                            i, S['id'], S['image'], S['mask'], S['imgsize'],
                             S['subset']))
         if cfg.experiment.debug.mode and i == 5:
             break
@@ -155,7 +166,7 @@ def get_data_components(cfg, get_samples_only=False):
 def _get_sample(args):
     """ Called by get_data_components() to load samples in a parallel manner."""
     start = time.time()
-    index, id, image, mask, size, subset = args
+    spacing, index, id, image, mask, size, subset = args
     class_names = _get_class_names('mmwhs')
     class_vals = list(range(len(class_names)))
     
@@ -175,7 +186,7 @@ def _get_sample(args):
 
     # resample
     orig_spacing = np.array(sitk_image.GetSpacing())
-    new_spacing = [0.625, 0.625, 0.625]  # 👁👁
+    new_spacing = spacing  # 👁👁
     if orig_spacing.tolist() != new_spacing:
         resample = sitk.ResampleImageFilter()
         # resample.SetInterpolator = sitk.sitkNearestNeighbor

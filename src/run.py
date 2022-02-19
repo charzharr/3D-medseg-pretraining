@@ -70,28 +70,7 @@ for exp_dir in exp_dirs:
               help='Flag to indicate whether to use distributed training.')
 def run_cli(config, distributed):
     
-    # --- ##  Get experiment configuration  ## --- #
-    given_cfg_path = pathlib.Path(config)
-    if given_cfg_path.exists():
-        print(f'[CFG] Given cfg file "{str(given_cfg_path)}" exists! Loading..')
-        cfg = get_config(config, merge_default=False, search_dir='')
-    else:
-        print(f'[CFG] Given cfg file "{str(given_cfg_path)}" does not exist! '
-              'Searching for matching name in experiment\'s config folder..')
-        curr_path = pathlib.Path(__file__).parent.absolute()
-        exp_cfg_path = None
-        for exp in EXPERIMENTS:
-            if exp in given_cfg_path.name:
-                exp_cfg_path = str(curr_path / 'experiments' / exp / 'configs')
-                print(f' ✔ Cfg experiment matched at {exp_cfg_path}.')
-                break
-
-        if not exp_cfg_path:
-            msg = (f'Given config file "{config}" does not contain any of the '
-                   f'experiment names in them: {list(EXPERIMENTS.keys())}')
-            raise ValueError(msg)
-        cfg = cfg = get_config(config, merge_default=False, 
-                               search_dir=exp_cfg_path)
+    cfg = get_experiment_cfg(config)
     
     # --- ##  Handle array job submissions '-t'  ## --- #
     env_vars = dict(os.environ)
@@ -172,7 +151,6 @@ def run_cli(config, distributed):
             torch.distributed.destroy_process_group()
     finally:
         print('🛑 Ended 🛑\n')
-        
 
 
 def kill_children():
@@ -182,6 +160,35 @@ def kill_children():
     for child in child_processes:
         print(f'[END] > Killing child process (PID={child.pid})')
         child.kill()
+
+
+def get_experiment_cfg(config):
+    """
+    Args:
+        config (str): config file name
+    """
+    # --- ##  Get experiment configuration  ## --- #
+    given_cfg_path = pathlib.Path(config)
+    if given_cfg_path.exists():
+        print(f'[CFG] Given cfg file "{str(given_cfg_path)}" exists! Loading..')
+        cfg = get_config(config, merge_default=False, search_dir='')
+    else:
+        print(f'[CFG] Given cfg file "{str(given_cfg_path)}" does not exist! '
+              'Searching for matching name in experiment\'s config folder..')
+        curr_path = pathlib.Path(__file__).parent.absolute()
+        exp_cfg_path = None
+        for exp in EXPERIMENTS:
+            if exp in given_cfg_path.name:
+                exp_cfg_path = str(curr_path / 'experiments' / exp / 'configs')
+                print(f' ✔ Cfg experiment matched at {exp_cfg_path}.')
+                break
+
+        if not exp_cfg_path:
+            msg = (f'Given config file "{config}" does not contain any of the '
+                   f'experiment names in them: {list(EXPERIMENTS.keys())}')
+            raise ValueError(msg)
+        cfg = get_config(config, merge_default=False, search_dir=exp_cfg_path)
+    return cfg
 
 
 def parse_cfg(cfg, adjust_by_comp=True):

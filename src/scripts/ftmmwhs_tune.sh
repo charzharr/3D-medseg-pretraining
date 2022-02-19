@@ -9,12 +9,12 @@
 #$ -q long          
 
 #$ -N pre3d_mmwhs
-#$ -q gpu@@csecri-titanxp   # gpu@@csecri-p100, gpu@@csecri-titanxp 
+#$ -q gpu@@csecri-p100   # gpu@@csecri-p100, gpu@@csecri-titanxp 
 #$ -l gpu_card=1
 
 
 export PROJ_PATH="/afs/crc.nd.edu/user/y/yzhang46/_3DPRE"
-export RUN_CFG="ftmmwhs_train.yaml"
+export RUN_CFG="ftmmwhs_tune.yaml"
 
 
 if [ "$USER" == "yzhang46" ]; then

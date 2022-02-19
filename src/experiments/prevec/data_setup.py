@@ -19,7 +19,59 @@ from .reorient import flip3d, rotate3d
 
 
 
-def get_mmwhs_data(config):
+def get_pretrain_data_components(config):
+    print('🖼️  Getting MMWHS, BCV, MSD Liver, MSD Lung samples.')
+    from experiments.pretrain_data_setup import get_df_samples
+    collect_d = get_df_samples(config)
+
+    train_df = df = collect_d['df']
+    samples = collect_d['samples']
+    
+    debug = config.experiment.debug
+    shuffle = False if debug.overfitbatch or debug.mode else True
+    num_train_workers = 0 if debug.mode or debug.overfitbatch else \
+                        config.train.num_workers
+    
+    if config.tasks.name == 'mg':
+        task_config = config.tasks[config.tasks.name]
+        print(f'🖼️  Task: {config.tasks.name}, Config: {task_config}.')
+        
+        print(f'\nTrain Data Components:')
+        from .data_mg import MGSampleSet
+        train_set = MGSampleSet(config, samples)
+        train_loader = torch.utils.data.DataLoader(
+            train_set, 
+            shuffle=shuffle,
+            batch_size=config.train.batch_size,
+            collate_fn=MGSampleSet._collate_mg,
+            num_workers=num_train_workers
+        )
+    
+    elif config.tasks.name == 'universal':
+        task_config = config.tasks[config.tasks.name]
+        print(f'🖼️  Task: {config.tasks.name}, Config: {task_config}.')
+    
+    elif config.task.name == 'rot':
+        task_config = config.tasks[config.tasks.name]
+        print(f'🖼️  Task: {config.tasks.name}, Config: {task_config}.')
+        
+    else:
+        assert False, f'{config.tasks.name} is not supported for all pretrain.'
+    
+    return {
+        'df': df,
+        'samples': samples,
+        'train_df': train_df,
+        'train_set': train_set,
+        'train_loader': train_loader,
+        'test_df': None,
+        'test_set': None,
+        'val_df': None,
+        'val_set': None,
+    }
+    
+
+def get_mmwhs_data_components(config):
     
     # Get samples and create datasets / dataloaders
     samples_d = mmwhs_setup.get_data_components(config, get_samples_only=True)
@@ -61,6 +113,19 @@ def get_mmwhs_data(config):
 def get_bcv_data(config):  # TODO when necessary.
     pass
 
+
+# ============================================================================ #
+# * ### * ### * ### *  New 2/18/22 Code: General Pretrain  * ### * ### * ### * #
+# ============================================================================ #
+
+
+
+
+
+
+# ============================================================================ #
+# * ### * ### * ### *     Old Code: Only MMWHS Pretrain    * ### * ### * ### * #
+# ============================================================================ #
 
 
 class PretrainDataset(torch.utils.data.Dataset):
