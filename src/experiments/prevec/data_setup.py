@@ -32,8 +32,8 @@ def get_pretrain_data_components(config):
     num_train_workers = 0 if debug.mode or debug.overfitbatch else \
                         config.train.num_workers
     
+    task_config = config.tasks[config.tasks.name]
     if config.tasks.name == 'mg':
-        task_config = config.tasks[config.tasks.name]
         print(f'🖼️  Task: {config.tasks.name}, Config: {task_config}.')
         
         print(f'\nTrain Data Components:')
@@ -47,12 +47,21 @@ def get_pretrain_data_components(config):
             num_workers=num_train_workers
         )
     
-    elif config.tasks.name == 'universal':
-        task_config = config.tasks[config.tasks.name]
+    elif config.tasks.name == 'sar':
         print(f'🖼️  Task: {config.tasks.name}, Config: {task_config}.')
+        
+        print(f'\nTrain Data Components:')
+        from .data_sar import SARSampleSet
+        train_set = SARSampleSet(config, samples)
+        train_loader = torch.utils.data.DataLoader(
+            train_set, 
+            shuffle=shuffle,
+            batch_size=config.train.batch_size,
+            collate_fn=SARSampleSet._collate,
+            num_workers=num_train_workers
+        )
     
-    elif config.task.name == 'rot':
-        task_config = config.tasks[config.tasks.name]
+    elif config.task.name == 'rubikpp':
         print(f'🖼️  Task: {config.tasks.name}, Config: {task_config}.')
         
     else:
@@ -86,7 +95,7 @@ def get_mmwhs_data_components(config):
         train_set,
         shuffle=shuffle,
         batch_size=config.train.batch_size,
-        collate_fn=_collate,
+        collate_fn=PretrainDataset._collate,
         num_workers=num_workers,
         prefetch_factor=2 if num_workers > 0 else 2
     )
@@ -291,33 +300,33 @@ class PretrainDataset(torch.utils.data.Dataset):
             # experiment-dependent
             'vectors': final_vecs
         }
-
-
-def _collate(batch):
-    """ Handles cases where each volume can output multiple crops. 
-    Assumptions:
-      - 'sample' is a list of samples
-      - 'tensor', 'mask', 'mask_one_hot' are lists of lists of tensors
-      - 'record' are list of lists of OrderedDicts
-    """
-    images, masks, masks_1h, samples, records = [], [], [], [], []
-    vecs = []
-    for example in batch:
-        samples.append(example['sample'])
-        images += example['tensor']
-        masks += example['mask']
-        masks_1h += example['mask_one_hot']
-        records += example['record']
         
-        vecs += example['vectors']
-    
-    return {
-        'images': torch.stack(images, dim=0).unsqueeze(1),
-        'masks': torch.stack(masks, dim=0).unsqueeze(1),
-        'masks_1h': torch.stack(masks_1h, dim=0),
-        'samples': samples,
-        'records': records,
-        'vectors': vecs
-    }
+    @staticmethod
+    def _collate(batch):
+        """ Handles cases where each volume can output multiple crops. 
+        Assumptions:
+        - 'sample' is a list of samples
+        - 'tensor', 'mask', 'mask_one_hot' are lists of lists of tensors
+        - 'record' are list of lists of OrderedDicts
+        """
+        images, masks, masks_1h, samples, records = [], [], [], [], []
+        vecs = []
+        for example in batch:
+            samples.append(example['sample'])
+            images += example['tensor']
+            masks += example['mask']
+            masks_1h += example['mask_one_hot']
+            records += example['record']
+            
+            vecs += example['vectors']
+        
+        return {
+            'X': torch.stack(images, dim=0).unsqueeze(1),
+            'masks': torch.stack(masks, dim=0).unsqueeze(1),
+            'masks_1h': torch.stack(masks_1h, dim=0),
+            'samples': samples,
+            'records': records,
+            'vectors': vecs
+        }
     
 

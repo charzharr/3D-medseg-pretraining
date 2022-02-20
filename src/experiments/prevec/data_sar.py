@@ -1,8 +1,9 @@
-""" Module data_mg.py (By: Charley Zhang, 2022)
+""" Module data_sar.py (By: Charley Zhang, 2022)
 
 Definitions of non-preloaded data containers and loaders for unsupervised
-Models Genesis pretraining. 
-    - Implements efficient multi-patch per crop.
+SAR pretraining:
+    - Basically MG + 3-scale classification.
+    - Efficient multi-patch per crop.
     - Skips mostly air crops via a mean patch threshold. 
 """
 
@@ -61,7 +62,7 @@ PRELOAD_DATA = False
 # ========================================================================== #
 
 
-class MGSampleSet(torch.utils.data.Dataset):
+class SARSampleSet(torch.utils.data.Dataset):
     """ Designed for Models Genesis pretraining. """
     clamp_low = -1000 
     clamp_high = 1000
@@ -74,15 +75,14 @@ class MGSampleSet(torch.utils.data.Dataset):
         
         self.crops_per_volume = config.train.batch_crops_per_volume
         self.cropper = ScaledUniformNoAirCropper3d()
-        self.scale_sampler = ValueSampler(False, config.train.scale_range)
-        print(f'🖼️  Sampling from scales: {config.train.scale_range}')
+        print(f'🖼️  Sampling from scales: {self.task_config.t_scales}')
         
         self.samples = samples
         
         self._preprocess_time = None  # EMA of preprocess time
         self._getitem_time = None
         
-        print(f'💠 MGDataset created with {len(self.samples)} samples. \n'
+        print(f'💠 SARDataset created with {len(self.samples)} samples. \n'
               f'   Crops/Vol={self.crops_per_volume}, '
               f'Virtual-Size={len(self)}.')
     
@@ -105,16 +105,42 @@ class MGSampleSet(torch.utils.data.Dataset):
         if sample.dataset == 'mmwhs':
             min_mean_thresh = 0
         
-        crop_meta_list = self.cropper(
-            image_arr, 
-            n_times=self.crops_per_volume, 
-            final_shape=self.config.train.patch_size,
-            scale_sampler=self.scale_sampler,
-            interpolation='trilinear',
-            min_mean_thresh=min_mean_thresh
-        )
-        crops, records = zip(*crop_meta_list)
+        # Get crops
+        scales = self.task_config.t_scales 
+        smallest_dim = min(image_arr.shape)
         
+        crops = []
+        records = []
+        fin_scales = []
+        for crop_idx in range(self.crops_per_volume):
+            for cidx, scale in enumerate(scales):
+                l = int(smallest_dim) * scale
+                crop, record = self.cropper(
+                    image_arr, 
+                    n_times=1, 
+                    final_shape=self.config.train.patch_size,
+                    interpolation='trilinear',
+                    min_mean_thresh=min_mean_thresh,
+                    patch_size=(l, l, l)
+                )
+                crops.append(crop)
+                records.append(record)
+                fin_scales.append(cidx)
+            # sample smallest scale twice: 1:1:2 ratio
+            l = int(smallest_dim) * scales[-1]
+            crop, record = self.cropper(
+                image_arr, 
+                n_times=1, 
+                final_shape=self.config.train.patch_size,
+                interpolation='trilinear',
+                min_mean_thresh=min_mean_thresh,
+                patch_size=(l, l, l)
+            )
+            crops.append(crop)
+            records.append(record)
+            fin_scales.append(len(scales) - 1)
+        
+        # Apply MG augmentations to each crop
         samples = []
         fin_crops = []
         fin_labs = []
@@ -165,11 +191,12 @@ class MGSampleSet(torch.utils.data.Dataset):
             'records': records,
             'image_tensors': fin_crops,
             'label_tensors': fin_labs,
-            'boundary_tensors': boundaries
+            'boundary_tensors': boundaries,
+            'scale_indices': fin_scales,
         }
         
     @staticmethod
-    def _collate_mg(batch):
+    def _collate(batch):
         """ 
         Args:
             batch (list of size B): each element is the dict returned by __getitem__
@@ -186,16 +213,19 @@ class MGSampleSet(torch.utils.data.Dataset):
         records = []
         image_tensors = []
         label_tensors = []
+        scales = []
         
         for b, example in enumerate(batch):
             _combine(samples, example['samples'])
             _combine(records, example['records'])
             _combine(image_tensors, example['image_tensors'])
             _combine(label_tensors, example['label_tensors'])
+            _combine(scales, example['scale_indices'])
         
         return {
             'X': torch.stack(image_tensors, dim=0).unsqueeze(1), 
-            'Y': torch.stack(label_tensors, dim=0).unsqueeze(1),
+            'Y_recon': torch.stack(label_tensors, dim=0).unsqueeze(1),
+            'Y_scale': torch.tensor(scales).long(),
             'samples': samples,
             'records': records
         }

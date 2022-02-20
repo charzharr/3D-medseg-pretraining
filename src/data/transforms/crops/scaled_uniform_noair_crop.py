@@ -1,4 +1,4 @@
-""" transforms/crops/scaled_uniform_noair_crop.py  (Author: Charley Zhang, 2021)
+""" transforms/crops/scaled_uniform_noair_crop.py  (Author: Charley Zhang, 2022)
 
 Practically the same as ScaledUniformCrop3d except there is a lower bound 
 threshold for the mean of a crop to pass to be valid (avoid air in scans).
@@ -8,8 +8,11 @@ requirements. This class works directly with tensors or array and is much
 faster & easily configurable. 
 
 Changes:
-    - Added scale_sampler like all modern croppers
-    - Added numpy support in addition to tensor
+    (Feb 2022)
+    - Added scale_sampler like all modern croppers.
+    - Added numpy support in addition to tensor.
+    - Added direct shape inputs to bypass size sampling.
+        (used for SAR self-supervised pretraining)
 """
 
 import math
@@ -29,7 +32,8 @@ from data.transforms.crops.utils import sample_crop, crop_resize_3d
 from experiments.prevec.sampler import ValueSampler
 
 
-DEBUG = True  # save rejected crops
+DEBUG = False  # save rejected crops
+WARN = False   # warnings on crops being larger than volume
 
 
 class ScaledUniformNoAirCropper3d:
@@ -69,7 +73,8 @@ class ScaledUniformNoAirCropper3d:
             scale_sampler=None,   # override init
             cubic_crop=None,      # override init
             min_mean_thresh=None, # override init
-            interpolation=None    # override init
+            interpolation=None,   # override init
+            patch_size=None       # override random crop size sampling
             ):
         assert isinstance(volume, (torch.Tensor, np.ndarray))
         
@@ -81,7 +86,8 @@ class ScaledUniformNoAirCropper3d:
         
         if scale_sampler is None:
             scale_sampler = self.scale_sampler
-        assert isinstance(scale_sampler, ValueSampler)
+        if patch_size is None:
+            assert isinstance(scale_sampler, ValueSampler)
         
         if cubic_crop is None:
             cubic_crop = self.cubic_crop
@@ -107,7 +113,13 @@ class ScaledUniformNoAirCropper3d:
         while n_valid_crops < n_times:
             
             # Get crop upper & lower bounding coordinates
-            if cubic_crop:  # same scale for all dims
+            if patch_size is not None:
+                assert len(patch_size) == 3
+                assert min(tuple(patch_size)) <= min(tuple(volume.shape))
+                _d = int(patch_size[0])
+                _h = int(patch_size[1])
+                _w = int(patch_size[2])
+            elif cubic_crop:  # same scale for all dims
                 dim_scale = scale_sampler.sample()
                 _d = int(dim_scale * final_shape[0])
                 _h = int(dim_scale * final_shape[1])
@@ -120,7 +132,8 @@ class ScaledUniformNoAirCropper3d:
                            f'{final_shape} out of a {volume_shape} volume.'
                            f'Resulted in an oversized patch of {[_d,_h,_w]} '
                            f'(scale {dim_scale:.2f}).')
-                    warnings.warn(msg)
+                    if WARN:
+                        warnings.warn(msg)
                     _d = int(_d / dim_ratios[max_idx])
                     _h = int(_h / dim_ratios[max_idx])
                     _w = int(_w / dim_ratios[max_idx])
@@ -142,10 +155,11 @@ class ScaledUniformNoAirCropper3d:
                                           interpolation=interpolation)
             if min_mean_thresh is not None:
                 if resized_crop.mean() < min_mean_thresh:
-                    print(f'🏗️  Crop rejected with mean {resized_crop.mean()}')
-                    print(f'    Lower: {crop_lower}, Upper: {crop_upper}')
+                    if DEBUG:
+                        print(f'🏗️  Crop rejected,mean: {resized_crop.mean()}')
+                        print(f'    Lower: {crop_lower}, Upper: {crop_upper}')
                     continue  # if not valid, sample another one
-            
+
             n_valid_crops += 1
             
             # Record creation
@@ -214,16 +228,6 @@ class ScaledUniformNoAirCropper3d:
     def _parse_scale_range(self, value):
         return Transform.parse_dimensional_ranges(value, 3, 'scale_range',
                                                   min_constraint=0)
-        
-
-if __name__ == '__main__':
-    
-    cropper = ScaledUniformNoAirCropper3d((16, 96, 96), scale_range=(0.5, 1.5))
-    
-    image = torch.randn((100, 512, 512))
-    crops_y_records = cropper(image, n_times=1)
-    
-    import IPython; IPython.embed(); 
 
     
     

@@ -131,7 +131,7 @@ def get_df_samples(cfg):
     train_loader = OneToManyLoader(
         train_set, 
         sample_processing_fn=patch_creator,
-        examples_per_sample=cfg.train.examples_per_volume,
+        examples_per_sample=cfg.train.batch_crops_per_volume,
         example_collate_fn=example_collate_fn, 
         batch_size=cfg.train.batch_size,
         shuffle_samples=shuffle,
@@ -142,7 +142,7 @@ def get_df_samples(cfg):
     )
     print(f'💠 OTMLoader created w/ {len(train_set)} train samples. \n'
               f'   BatchSize={cfg.train.batch_size}, '
-              f'CropsPerVolume={cfg.train.examples_per_volume}, '
+              f'CropsPerVolume={cfg.train.batch_crops_per_volume}, '
               f'ShuffleSamples/Patches={shuffle}, '
               f'NumWorkers={cfg.train.num_workers}.')
     

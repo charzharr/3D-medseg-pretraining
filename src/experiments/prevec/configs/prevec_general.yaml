@@ -3,7 +3,7 @@
 experiment:
   description: |
     > CT data pretraining for spatial prediction tasks (not just proposed vec).
-  id: "(0218_r2u101_pretr_CV+2)flip_vs100_adamw,0025-cos_mse_r1"     # for wandb run identification
+  id: "(0219_r2u101_pretr_mg)ep300_adamw,002-wd0-cos_mse_r1"     # for wandb run identification
 
   name: 'prevec'   # for experiment module identification
   project: 'miccai22_pretrain3d'
@@ -11,8 +11,8 @@ experiment:
   debug:                                            # (Correct Alignment)
     mode: False                                     # < Check
     overfitbatch: False                             # < Check
-    wandb: False                                     # < Check
-    save: False                                      # < Check
+    wandb: True                                     # < Check
+    save: True                                      # < Check
     break_train_iter: False                         # < Check
     break_test_iter: False                          # < Check
     test_every_n_epochs: 1
@@ -31,13 +31,39 @@ tasks:
   name: 'mg'
 
   mg:
+    test: False
+    num_classes: 1
+    
+    prediction_head: False
+    prediction_head_dims: 128
+    
+    t_mg_flip: 0.4
+    t_mg_shuffle: 0.5
+    t_mg_shuffle_times: 10000
+    t_mg_nonlinear: 0.9
+    t_mg_paint: 0.9
+    t_mg_inpaint: 0.3  # out-paint is 1-inpaint_p
+    t_mg_inpaint_uniform: True
+    t_mg_inpaint_times: 7
+    t_mg_outpaint_uniform: True
+    t_mg_outpaint_times: 5
+    
+  universal:
+    test: False
+    
     t_mg_flip: 0.4
     t_mg_shuffle: 0.5
     t_mg_nonlinear: 0.9
     t_mg_paint: 0.9
     t_mg_inpaint: 0.8  # out-paint is 1-inpaint_p
+    
+  rubikpp:
+    test: False
+    n: 7  # number of sub-cubes per dim
+    m: 4  # number of cube levels to rotate per axes
 
   prevec:
+    test: True
     loss: 'spherical'
     pred_indices: [0,1,2]  # [0,1,2,3,4,5,6,7,8]
     pred_mag: False
@@ -100,20 +126,18 @@ model:
 train:
   deep_sup: False
 
-  epochs: 250
+  epochs: 300
   start_epoch: 0
-  batch_size: 8   # ⚠️⚠️⚠️ actual batch-size is double this!!!!
-  batch_crops_per_volume: 3  # real batch-size is batch_size * BCperVol
-  examples_per_volume: 100 
-  num_workers: 0
+
+  dataset_sample_multiplier: 1
+  batch_size: 2   # ⚠️⚠️⚠️ actual batch-size is double this!!!!
+  batch_crops_per_volume: 6  # real batch-size is batch_size * BCperVol
+  num_workers: 5
 
   patch_size: [96, 96, 96] # [64, 128, 128], [32, 160, 160]
-  scale_range: [0.5, 2]   # 48 -> 192
+  scale_range: [0.75, 1.25]   # 48 -> 192
   cubic_crop: True
-  min_mean_crop_thresh: 0.05  # threshold of mean patch value to avoid air
-
-  dataset_len_multiplier: 1
-  crops_per_volume: 4
+  min_mean_crop_thresh: 0.25  # threshold of mean patch value to avoid air
   
   t_flip_x: 0.5  # flip on all 3 axis
   t_flip_y: 0.5
@@ -129,8 +153,8 @@ train:
 
   optimizer:
     name: 'adamw'
-    lr: 0.0025  # usually 0.01 for FS50 & above
-    wt_decay: 0.01
+    lr: 0.002  # usually 0.01 for FS50 & above
+    wt_decay: 0.0
     
     nesterov:
       momentum: 0.99

@@ -21,6 +21,7 @@ import collections
 from collections import namedtuple
 
 import torch, torchvision
+import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader
@@ -82,6 +83,7 @@ def run(rank, cfg, inference_metrics_queue):
     gpu_indices = cfg.experiment.gpu_idxs
     device = cfg.experiment.device
     debug = cfg.experiment.debug
+    task_config = cfg.tasks[cfg.tasks.name]
 
     if rank == 0:  # wandb sweeping or standard tracking
         if 'sweep' in cfg.experiment and cfg.experiment.sweep:
@@ -124,10 +126,10 @@ def run(rank, cfg, inference_metrics_queue):
     } 
 
     # Training Components: model, criterion, optimizer, scheduler
-    from experiments.prevec.model_setup import get_model
+    from experiments.prevec.model_setup import get_model_components
     if rank == 0:
         output.header_three('Model Setup')
-    model_d = get_model(cfg)
+    model_d = get_model_components(cfg)
     model = model_d['model'].to(device)
     if not cfg.experiment.distributed and len(gpu_indices) > 1:
         print(f'  * {len(gpu_indices)} GPUs, using nn.DataParallel.')
@@ -142,8 +144,8 @@ def run(rank, cfg, inference_metrics_queue):
     if rank == 0:
         output.header_three('Criterion + Optimizer + Scheduler Setup')
     
-    criterions = []
-    if 'prevec' in cfg.tasks.names:
+    criterion = None
+    if cfg.tasks.name == 'prevec':
         if cfg.tasks.prevec.loss == 'spherical':
             from experiments.prevec.prevec_losses import SphericalCriterion
             crit_prevec = SphericalCriterion(
@@ -151,11 +153,14 @@ def run(rank, cfg, inference_metrics_queue):
                 angle_loss=cfg.tasks.prevec.ang_loss,
                 r_weight=1, theta_weight=1, phi_weight=1
             )
-            crit_prevec = crit_prevec.to(device)
-            criterions.append(crit_prevec)
+            criterion = crit_prevec.to(device)
             # cfg.tasks.prevec.pred_vectors
         else:
             assert False
+    elif cfg.tasks.name == 'mg':
+        criterion = nn.MSELoss().to(device)
+    elif cfg.tasks.name == 'sar':
+        criterion = model.loss
     
     optimizer = setup.get_optimizer(cfg, model.parameters())
     scheduler = setup.get_scheduler(cfg, optimizer)
@@ -217,33 +222,49 @@ def run(rank, cfg, inference_metrics_queue):
             
             samples = batch['samples']
             records = batch['records']
-            vectors = batch['vectors']
             
-            X = batch['images'].float().to(device, non_blocking=True)
+            X = batch['X'].float().to(device, non_blocking=True)
             # Y_id = batch['masks'].to(torch.uint8).to(device, non_blocking=True)
 
             out_d = model(X)
             out = out_d['out'] if isinstance(out_d, dict) else out_d
             
+            # -- Loss Calculation -- #
             loss = 0
             loss_str = ''
-            if 'prevec' in cfg.tasks.names:
+            if cfg.tasks.name == 'prevec':
                 # create labels
+                vectors = batch['vectors']
                 Y_prevec = create_prevec_targ(vectors, records,
                     cfg).to(out.device)
                 # print('in train before crit called'); import IPython; IPython.embed(); 
-                loss_prevec_d = crit_prevec(out, Y_prevec)
+                loss_prevec_d = criterion(out, Y_prevec)
                 loss += loss_prevec_d['loss']
                 loss_str += f'PrevecLoss {loss.item():.4f} '
+            elif cfg.tasks.name == 'mg':
+                Y = batch['Y'].to(device)
+                task_loss = criterion(out.sigmoid(), Y)
+                loss += task_loss
+                loss_str += f'MGLoss {loss.item():.4f} '
+            elif cfg.tasks.name == 'sar':
+                Y_recon = batch['Y_recon'].to(device)
+                Y_scale = batch['Y_scale'].to(device)
+                loss_d = model.loss(out_d, Y_recon, Y_scale)
+                loss += loss_d['loss']
+                loss_str += (f'SARLoss {loss.item():.4f} (recon: '
+                             f'{loss_d["recon"].item():.4f}, scale: '
+                             f'{loss_d["scale"].item():.4f})')
+                
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
 
             # Iteration & Epoch Training Metrics 
-            if rank == 0:
+            print_every = max(1, len(train_loader) // 7)
+            if rank == 0 and it % print_every == 0 or debug.mode:
                 iter_metrics_d = {}
                 iter_metrics_d['loss'] = loss.item()
-
+                
                 iter_time = WATCH.toc('iter', disp=False)
                 print(
                     f"    Iter {it+1}/{len(train_loader)} "
@@ -255,37 +276,35 @@ def run(rank, cfg, inference_metrics_queue):
                 epmeter.update({k: iter_metrics_d[k] for k in update_mets})
 
             # Save images, masks, and predictions
-            if rank == 0 and cfg.experiment.debug.overfitbatch and it == 0:
-                from data.transforms.z_normalize import ZNormalize
-                for i in range(X.shape[0]):
-                    img = ZNormalize().invert(X[i][0], records[i]['ZNormalize'])
-                    img = img.detach().cpu().numpy().astype(np.int16)
-                    mask = Y_id[i][0].detach().cpu().numpy().astype(np.uint8)
-                    pred = pred_ids[i][0].detach().cpu().numpy().astype(np.uint8)
-
-                    print(f'⭐ Iteration {it+1}, Example {i+1} Info..')
-                    sim = samples[i].image.sitk_image
-                    print(samples[i].image)
-                    print(samples[i].mask)
-                    print(records[i]['ScaledForegroundCropper3d'])
-
-                    scrop = sitk.GetImageFromArray(img)
-                    scrop.SetSpacing(sim.GetSpacing())
-                    scrop.SetOrigin(sim.GetOrigin())
-                    scrop.SetDirection(sim.GetDirection())
-                    sitk.WriteImage(scrop, f'ofit_crop{i + 1}.nii.gz')
-
-                    smask = sitk.GetImageFromArray(mask)
-                    smask.SetSpacing(sim.GetSpacing())
-                    smask.SetOrigin(sim.GetOrigin())
-                    smask.SetDirection(sim.GetDirection())
-                    sitk.WriteImage(smask, f'ofit_targ{i + 1}.nii.gz')
+            if (cfg.tasks.name == 'mg' or cfg.tasks.name == 'sar') and \
+                    it == 0 and epoch % 100 == 0:
+                def save_volume(image_arr, ref_sitk, filename):
+                    image_sitk = sitk.GetImageFromArray(image_arr)
+                    image_sitk.SetSpacing(ref_sitk.GetSpacing())
+                    image_sitk.SetOrigin(ref_sitk.GetOrigin())
+                    image_sitk.SetDirection(ref_sitk.GetDirection())
+                    sitk.WriteImage(image_sitk, filename)
+                
+                curr_path = pathlib.Path(__file__).parent.absolute()
+                exp_save_path = curr_path / 'artifacts' / cfg.experiment.id
+                os.makedirs(exp_save_path, exist_ok=True)
+                
+                if cfg.tasks.name == 'sar':
+                    Y = batch['Y_recon']
+                
+                print(f'💾  Saving Crops & Preds for epoch {epoch}!')
+                for b in range(0, X.shape[0], 1):
+                    image_arr = X[b][0].detach().cpu().numpy().astype(np.float32)
+                    label_arr = Y[b][0].detach().cpu().numpy().astype(np.float32)
+                    recon_arr = out[b][0].sigmoid().detach().cpu().numpy().astype(np.float32)
                     
-                    spred = sitk.GetImageFromArray(pred)
-                    spred.SetSpacing(sim.GetSpacing())
-                    spred.SetOrigin(sim.GetOrigin())
-                    spred.SetDirection(sim.GetDirection())
-                    sitk.WriteImage(spred, f'ofit_pred{i + 1}.nii.gz')
+                    ref_im = samples[b].image.sitk_image
+                    save_volume(image_arr, ref_im, os.path.join(exp_save_path,
+                        f'ep{epoch}_b{b}_input.nii.gz'))
+                    save_volume(label_arr, ref_im, os.path.join(exp_save_path,
+                        f'ep{epoch}_b{b}_orig.nii.gz'))
+                    save_volume(recon_arr, ref_im, os.path.join(exp_save_path,
+                        f'ep{epoch}_b{b}_recon.nii.gz'))
 
             global_iter += 1
             WATCH.tic('iter')
@@ -305,14 +324,14 @@ def run(rank, cfg, inference_metrics_queue):
 
         # Test + Epoch Metrics
         test_every_n = debug.test_every_n_epochs
-        if epoch % test_every_n == test_every_n - 1:
+        if epoch % test_every_n == test_every_n - 1 and task_config.test:
             if rank == 0:
                 output.subsubsection('Test Metrics')
             N_test_exs = len(data_d['df'][data_d['df']['subset'] == 'test'])
             test_mets = test_metrics(cfg, model, test_set, epoch, 
                 inference_metrics_queue, N_test_exs, name='test',
                 overlap_perc=cfg.test.patch_overlap_perc,
-                criterions=criterions)
+                criterion=criterion)
             if rank == 0:
                 epoch_mets.update(test_mets, tracked_epmets, 'test_ep_')
         
@@ -343,7 +362,7 @@ def run(rank, cfg, inference_metrics_queue):
 
 
 def test_metrics(cfg, model, dataset, epoch, test_metrics_queue, 
-                 num_examples, name='test', overlap_perc=0.2, criterions=None):
+                 num_examples, name='test', overlap_perc=0.2, criterion=None):
     """
     Args:
         num_examples: needed for DDP since rank 0 worker needs a total count
@@ -424,12 +443,11 @@ def test_metrics(cfg, model, dataset, epoch, test_metrics_queue,
                 out_d = model(crops)
                 logits = out_d['out'] if isinstance(out_d, dict) else out_d
                 
-                if criterions:
-                    for criterion in criterions:
-                        loss_d = criterion(logits, Y)
-                        loss = loss_d['loss'] if isinstance(loss_d, dict) else loss_d
-                        loss_accum += loss
-                        loss_norm += B
+                if criterion:
+                    loss_d = criterion(logits, Y)
+                    loss = loss_d['loss'] if isinstance(loss_d, dict) else loss_d
+                    loss_accum += loss
+                    loss_norm += B
             del crops; del logits 
 
     # Accumulate metrics & print results

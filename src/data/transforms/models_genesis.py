@@ -146,11 +146,11 @@ def nonlinear_intensity_map(x, p=0.5):
         xvals = np.sort(xvals)
     else:
         xvals, yvals = np.sort(xvals), np.sort(yvals)
-    nonlinear_x = np.interp(x, xvals, yvals)
+    nonlinear_x = np.interp(x, xvals, yvals).astype(np.float32)
     return nonlinear_x
 
 
-def in_paint(x, p=0.5, n_paints=5):
+def in_paint(x, p=0.5, n_paints=5, uniform_paint=True):
     """ 
     Args:
         x (np.ndarray): HxW or DxHxW grayscale image
@@ -166,8 +166,11 @@ def in_paint(x, p=0.5, n_paints=5):
             noise_x = random.randint(3, H-block_noise_size_x-3)
             noise_y = random.randint(3, W-block_noise_size_y-3)
             
-            uniform_paint_patch = np.random.rand(block_noise_size_x, 
-                                                 block_noise_size_y) * 1.0
+            patch_size = (block_noise_size_x, block_noise_size_y)
+            if uniform_paint:
+                uniform_paint_patch = np.ones(patch_size) * np.random.rand(1)[0]
+            else:
+                uniform_paint_patch = np.random.rand(patch_size) * 1.0
             x[noise_x:noise_x+block_noise_size_x, 
               noise_y:noise_y+block_noise_size_y] = uniform_paint_patch
             n_paints -= 1
@@ -182,9 +185,14 @@ def in_paint(x, p=0.5, n_paints=5):
             noise_y = random.randint(3, H-block_noise_size_y-3)
             noise_z = random.randint(3, W-block_noise_size_z-3)
             
-            uniform_paint_patch = np.random.rand(block_noise_size_x, 
-                                                 block_noise_size_y, 
-                                                 block_noise_size_z) * 1.0
+            patch_size = (block_noise_size_x, 
+                          block_noise_size_y, 
+                          block_noise_size_z)
+            if uniform_paint:
+                uniform_paint_patch = np.ones(patch_size) * np.random.rand(1)[0]
+            else:
+                uniform_paint_patch = np.random.rand(patch_size) * 1.0
+            
             x[noise_x:noise_x+block_noise_size_x, 
               noise_y:noise_y+block_noise_size_y, 
               noise_z:noise_z+block_noise_size_z] = uniform_paint_patch
@@ -192,7 +200,7 @@ def in_paint(x, p=0.5, n_paints=5):
     return x
 
 
-def out_paint(x, p=0.5, n_paints=4):
+def out_paint(x, p=0.5, n_paints=4, uniform_paint=True):
     """ 
     Args:
         x (np.ndarray): HxW or DxHxW grayscale image
@@ -203,7 +211,10 @@ def out_paint(x, p=0.5, n_paints=4):
     image_temp = copy.deepcopy(x)
     if x.ndim == 2:
         H, W = x.shape
-        x = np.random.rand(H, W) * 1.0
+        if uniform_paint:
+            x = np.ones((H, W)) * np.random.rand(1)[0]
+        else:
+            x = np.random.rand(H, W) * 1.0
         
         block_noise_size_x = H - random.randint(3*H//7, 4*H//7)
         block_noise_size_y = W - random.randint(3*W//7, 4*W//7)
@@ -229,7 +240,10 @@ def out_paint(x, p=0.5, n_paints=4):
     else:
         assert x.ndim == 3
         D, H, W = x.shape
-        x = np.random.rand(D, H, W) * 1.0
+        if uniform_paint:
+            x = np.ones((D, H, W)) * np.random.rand(1)[0]
+        else:
+            x = np.random.rand(D, H, W) * 1.0
         
         block_noise_size_x = D - random.randint(3*D//7, 4*D//7)
         block_noise_size_y = H - random.randint(3*H//7, 4*H//7)

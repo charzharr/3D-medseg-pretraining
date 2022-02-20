@@ -158,7 +158,6 @@ class Resize3d(Transform):
             elif 'cubic' in interpolation:
                 order = 2
             ret_image = resize(image, size, order=order)
-            print(f'🏗️ DEBUG: order={order}, img_max={image.max()}, ret_img_max={ret_image.max()}')
             
             if ret_image.dtype != dtype:
                 ret_image = ret_image.astype(dtype)
