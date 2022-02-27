@@ -150,7 +150,7 @@ def nonlinear_intensity_map(x, p=0.5):
     return nonlinear_x
 
 
-def in_paint(x, p=0.5, n_paints=5, uniform_paint=True):
+def in_paint(x, p=0.5, n_paints=5, uniform_paint=True, get_paint_mask=False):
     """ 
     Args:
         x (np.ndarray): HxW or DxHxW grayscale image
@@ -158,6 +158,8 @@ def in_paint(x, p=0.5, n_paints=5, uniform_paint=True):
     if random.random() >= p:
         return x
 
+    if get_paint_mask:
+        paint_mask = np.zeros_like(x).astype('uint8')
     if x.ndim == 2:
         H, W = x.shape
         while n_paints > 0 and random.random() < 0.95:
@@ -173,6 +175,10 @@ def in_paint(x, p=0.5, n_paints=5, uniform_paint=True):
                 uniform_paint_patch = np.random.rand(patch_size) * 1.0
             x[noise_x:noise_x+block_noise_size_x, 
               noise_y:noise_y+block_noise_size_y] = uniform_paint_patch
+            
+            if get_paint_mask:
+                paint_mask[noise_x:noise_x+block_noise_size_x, 
+                        noise_y:noise_y+block_noise_size_y] = 1
             n_paints -= 1
     else:
         assert x.ndim == 3
@@ -196,17 +202,27 @@ def in_paint(x, p=0.5, n_paints=5, uniform_paint=True):
             x[noise_x:noise_x+block_noise_size_x, 
               noise_y:noise_y+block_noise_size_y, 
               noise_z:noise_z+block_noise_size_z] = uniform_paint_patch
+            
+            if get_paint_mask:
+                paint_mask[noise_x:noise_x+block_noise_size_x, 
+                        noise_y:noise_y+block_noise_size_y, 
+                        noise_z:noise_z+block_noise_size_z] = 1
             n_paints -= 1
+    if get_paint_mask:
+        return x, paint_mask
     return x
 
 
-def out_paint(x, p=0.5, n_paints=4, uniform_paint=True):
+def out_paint(x, p=0.5, n_paints=4, uniform_paint=True, get_paint_mask=False):
     """ 
     Args:
         x (np.ndarray): HxW or DxHxW grayscale image
     """
     if random.random() >= p:
         return x
+    
+    if get_paint_mask:
+        paint_mask = np.ones_like(x).astype('uint8')
 
     image_temp = copy.deepcopy(x)
     if x.ndim == 2:
@@ -236,6 +252,9 @@ def out_paint(x, p=0.5, n_paints=4, uniform_paint=True):
                                     noise_y:noise_y+block_noise_size_y]
             x[noise_x:noise_x+block_noise_size_x, 
               noise_y:noise_y+block_noise_size_y] = orig_patch
+            if get_paint_mask:
+                paint_mask[noise_x:noise_x+block_noise_size_x, 
+                           noise_y:noise_y+block_noise_size_y] = 0
             n_paints -= 1
     else:
         assert x.ndim == 3
@@ -273,7 +292,14 @@ def out_paint(x, p=0.5, n_paints=4, uniform_paint=True):
             x[noise_x:noise_x+block_noise_size_x, 
               noise_y:noise_y+block_noise_size_y, 
               noise_z:noise_z+block_noise_size_z] = orig_patch
+            if get_paint_mask:
+                paint_mask[noise_x:noise_x+block_noise_size_x, 
+                           noise_y:noise_y+block_noise_size_y, 
+                           noise_z:noise_z+block_noise_size_z] = 0
             n_paints -= 1
+    
+    if get_paint_mask:
+        return x, paint_mask
     return x
 
 

@@ -3,9 +3,9 @@
 experiment:
   description: |
     > CT data pretraining for spatial prediction tasks (not just proposed vec).
-  id: "(0221_r2u101_pretr_mg-l1+l1)ep200_adamw,0002-wd0-cos_mse_r1"     # for wandb run identification
+  id: "(0219_r2u101_pretr_rubik-n7m4)ep300_adamw,0001-wd0-cos_mse_r1"     # for wandb run identification
 
-  name: 'prevec'   # for experiment module identification
+  name: 'rubik'   # for experiment module identification
   project: 'miccai22_pretrain3d'
 
   debug:                                            # (Correct Alignment)
@@ -28,28 +28,16 @@ experiment:
 # ---- ##  Pretaraining Task-specific Settings  ## ---- #
 
 tasks:
-  name: 'mg'
+  name: 'rubikpp'
 
-  mg:
+  rubikpp:
     test: False
-    num_classes: 2  # 1 for vanilla mg, 2 for boundary pred
-    loss_recon: 'l1'
-    loss_boundary: 'l1'
-    boundary_in_paint: True  # False means predict boundary for entire img
-    
-    prediction_head: False
-    prediction_head_dims: 128
-    
-    t_mg_flip: 0.4
-    t_mg_shuffle: 0.5
-    t_mg_shuffle_times: 5000
-    t_mg_nonlinear: 0.9
-    t_mg_paint: 0.9
-    t_mg_inpaint: 0.4  # out-paint is 1-inpaint_p
-    t_mg_inpaint_uniform: True
-    t_mg_inpaint_times: 10
-    t_mg_outpaint_uniform: True
-    t_mg_outpaint_times: 10   # actually the number of orig image 'paints'
+
+    n: 7  # number of sub-cubes per dim
+    m: 4  # number of cube levels to rotate per axes
+
+    num_classes: 1   # 1 for grayscale recon
+    recon_weight: 10  # from rubik++ paper
 
 
 # ---- ##  Data Preprocessing, Loading, Transformation  ## ---- #
@@ -97,7 +85,7 @@ model:
 train:
   deep_sup: False
 
-  epochs: 201
+  epochs: 300
   start_epoch: 0
 
   dataset_sample_multiplier: 1
@@ -124,7 +112,7 @@ train:
 
   optimizer:
     name: 'adamw'
-    lr: 0.0002  # usually 0.01 for FS50 & above
+    lr: 0.0001  # usually 0.01 for FS50 & above
     wt_decay: 0.0
     
     nesterov:

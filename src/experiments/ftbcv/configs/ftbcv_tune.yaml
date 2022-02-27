@@ -1,17 +1,6 @@
   # ---- Pretrained Experiment Names --- #
-  # 0224 Vec Pretrain on MGv2 Pretrained
-  #   (0224_pretr_mgl1l1pre_vec-modelv2)cv8-l1-flip_reconl1-allboundl1_ep200_adamw,0001-wd0-cos_mse_r1
-  #   (0224_pretr_pre-mgl1+!b_vec-modelv2)cv8-l1-flip_reconl1-allboundl1_ep200_adamw,0001-wd0-cos_mse_r1
-  # 0221 Vec Experiments (model v2)
-  #   (0221_r2u101_pretr_vec-modelv2)cv8-l1-flip+rot2_reconl1-paintboundl1_ep200_adamw,0002-wd0-cos_mse_r1
-  #  *(0221_r2u101_pretr_vec-modelv2)cv8-l1-flip+rot2_reconl1-allboundl1_ep200_adamw,0002-wd0-cos_mse_r1
-  #   (0221_r2u101_pretr_vec-modelv2)cv8-l1-flip_reconl1-allboundl1_ep200_adamw,0002-wd0-cos_mse_r1
-  #   (0221_r2u101_pretr_vec-modelv2)cv8-flip+rot2_l1_ep200_adamw,0002-wd0-cos_mse_r1
-  #   (0221_r2u101_pretr_vec-modelv2)cv8-flip_l1_ep200_adamw,0002-wd0-cos_mse_r1
-  #   (0221_r2u101_pretr_vec-modelv2)cv-flip-rot2_l1_ep200_adamw,0002-wd0-cos_mse_r1
-  #   (0221_r2u101_pretr_vec-modelv2)cv-flip_l1_ep200_adamw,0002-wd0-cos_mse_r1
   # 0221 MGv2 Experiments
-  #   (0221_r2u101_pretr_mg-mse+!b)ep200_adamw,001-wd0-cos_mse_r1
+  #   (0221_r2u101_pretr_mg-mse+!b)ep200_adamw,001-wd0-cos_mse_r1_prevec
   #   (0221_r2u101_pretr_mg-l1+!b)ep200_adamw,001-wd0-cos_mse_r1
   #   (0221_r2u101_pretr_mg-l1+l1)ep200_adamw,0002-wd0-cos_mse_r1
   #   (0221_r2u101_pretr_mg-l1+l1full)ep200_adamw,0002-wd0-cos_mse_r1
@@ -24,14 +13,17 @@
   # 0217 CV+1: (0217_r2u101_pretr_CV+1)flip_vs100_adamw,0025-cos_mse_r1
   # 0217 CV+2: (0217_r2u101_pretr_CV+2)flip_vs100_adamw,0025-cos_mse_r1
 
+
 # ---- ##  Experiment Setup, Logging Specifications, Environment  ## ---- #
 experiment:
   description: |
-    > MMWHS segmentation finetuning.
-    >   Data: 20 volumes of 7 heart structures (16 train, 4 test).
-  id: "(0226_whstune-fs10_*0224prepreMGv2l1!b_fullpre_vec+recon-whspre-fliprot-l1l1-ba)vs500_dsup+batchdice_cedc-adamw,001-cos_r1"     # for wandb run identification
+    > Reimplementation of BCV for 3D segmentation finetuning.
+    >   Data: 30 volumes of 13 abdominal structures.
+    >    9/4 Best Settings: Gen-UNet, PGLscales (1.1, 1.4), wCE ('bcv'), bbgdc
+    >    9/10 Use nnUNet3d Settings: fixed sampling, network, optim, deep-sup.
+  id: "(0226_bcvtune-fs100_0219sar-lr,0001)vs50_dsup+batchdice_cedc-adamw,001-cos_r1"     # for wandb run identification
 
-  name: 'ftmmwhs'   # for experiment module identification
+  name: 'ftbcv'   # for experiment module identification
   project: 'miccai22_pretrain3d'
 
   debug:                                            # (Correct Alignment)
@@ -47,21 +39,24 @@ experiment:
   adjust_by_comp: False  # adjust training params based on specific components
 
   checkpoint:
-    file: '(0224_pretr_pre-mgl1+!b_vec-modelv2)cv8-l1-flip_reconl1-allboundl1_ep200_adamw,0001-wd0-cos_mse_r1'
+    file: '(0219_r2u101_pretr_sar)ep300_adamw,0001-wd0-cos_mse_r1'
+
 
 # ---- ##  Data Preprocessing, Loading, Transformation  ## ---- #
 
 data:  # describing project-wide data specifications
-  name: 'mmwhs'
-  mmwhs:
-    num_classes: 8  # including background
-    split: 'fs10_8-2_a.csv'  # 'lab_df.csv' 'fs50_8-2_a.csv'
-      # 16 train, 4 test | 
+  name: 'bcv'
+  kits18: ''
+  msd: ''
+  bcv:
+    num_classes: 14
+    split: 'cotr70-30_fs100.csv'  # 60-20-20.csv, cotr70-30_fs100.csv 'cotr70-30_fs50_a.csv'
+
 
 # Model / Criterion / Other nn.Module Specifications
-model:
+model:                # 'nnunet3d'  # 'genesis_unet3d'  # gn_unet3d
   name: 'res2unet3d'  # nnunet3d, hrnet3d, denseunet3d, unet3p3d, res2unet3d
-  init: 'kaiming'
+  init: 'kaiming'  
   sync_bn: True
   norm: 'batchnorm'
   act: 'relu'
@@ -74,6 +69,8 @@ model:
     layers: 101
     base_width: 26  # default: 26
 
+
+
 # ---- ##  Training: iterations, criterion, optimization, etc.  ## ---- #
 
 train:
@@ -82,14 +79,14 @@ train:
   epochs: 100
   start_epoch: 0
   batch_size: 4   # subject to change based on model, deep_sup, crop size
-  examples_per_volume: 500  # 250, 250 iterations per epoch (nnUNet)
-    # for fs100: 100, fs25: 150
+  examples_per_volume: 50  # 250, 250 iterations per epoch (nnUNet)
+    # for fs100: 
   num_workers: 3
 
   patch_size: [64, 128, 128] # [64, 128, 128], [32, 160, 160]
   fg_bias: 0.333
   scale_range: [0.9, 1.1]
-  
+
   t_flip: 0.25  # flip on all 3 axis
   t_gn: 0.  # gaussian noise
   t_gb: 0.15  # gaussian blur

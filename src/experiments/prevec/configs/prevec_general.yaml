@@ -39,14 +39,14 @@ tasks:
     
     t_mg_flip: 0.4
     t_mg_shuffle: 0.5
-    t_mg_shuffle_times: 10000
+    t_mg_shuffle_times: 2000
     t_mg_nonlinear: 0.9
     t_mg_paint: 0.9
     t_mg_inpaint: 0.3  # out-paint is 1-inpaint_p
     t_mg_inpaint_uniform: True
-    t_mg_inpaint_times: 7
+    t_mg_inpaint_times: 10
     t_mg_outpaint_uniform: True
-    t_mg_outpaint_times: 5
+    t_mg_outpaint_times: 10
     
   universal:
     test: False

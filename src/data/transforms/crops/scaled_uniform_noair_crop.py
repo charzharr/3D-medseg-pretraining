@@ -9,7 +9,7 @@ faster & easily configurable.
 
 Changes:
     (Feb 2022)
-    - Added scale_sampler like all modern croppers.
+    - Added scale_sampler like all modern croppers (made instance check general)
     - Added numpy support in addition to tensor.
     - Added direct shape inputs to bypass size sampling.
         (used for SAR self-supervised pretraining)
@@ -29,7 +29,6 @@ if __name__ == '__main__':
 from lib.utils.parse import parse_bool, parse_range
 from data.transforms.transform_base import Transform
 from data.transforms.crops.utils import sample_crop, crop_resize_3d
-from experiments.prevec.sampler import ValueSampler
 
 
 DEBUG = False  # save rejected crops
@@ -87,7 +86,8 @@ class ScaledUniformNoAirCropper3d:
         if scale_sampler is None:
             scale_sampler = self.scale_sampler
         if patch_size is None:
-            assert isinstance(scale_sampler, ValueSampler)
+            assert hasattr(scale_sampler, 'sample') and \
+                   callable(scale_sampler.sample)
         
         if cubic_crop is None:
             cubic_crop = self.cubic_crop

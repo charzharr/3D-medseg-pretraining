@@ -104,15 +104,16 @@ def get_data_components(cfg):
     # 2. Create master list of samples (threading?) & SampleSet
     start = time.time()
     
-    if 'spacing' in cfg.data.mmwhs:
-        SPACING = cfg.data.mmwhs.spacing
-        print(f'🖼️  ({NAME}) Using config spacing (WxHxD): {SPACING}')
+    spacing = SPACING
+    if 'spacing' in cfg.data.bcv:
+        spacing = cfg.data.bcv.spacing
+        print(f'🖼️  ({NAME}) Using config spacing (WxHxD): {spacing}')
     else:
-        print(f'🖼️  ({NAME}) Using default spacing (WxHxD): {SPACING}')
+        print(f'🖼️  ({NAME}) Using default spacing (WxHxD): {spacing}')
     
     sample_args = []
     for i, S in pd.concat([train_df, val_df, test_df]).iterrows():
-        sample_args.append((SPACING, 
+        sample_args.append((spacing, 
                             i, S['id'], S['image'], S['mask'], S['imgsize'],
                             S['subset']))
         if cfg.experiment.debug.mode and i == 10:
@@ -211,6 +212,9 @@ def _get_sample(args):
         new_mask.SetOrigin(mask.GetOrigin())
         new_mask.SetDirection(mask.GetDirection())
         new_mask.SetSpacing(new_spacing)
+        
+        print(f'Spacing: {orig_spacing} to {new_spacing} | '
+              f'Size: {orig_size} to {sitk_image.GetSize()}')
     else:
         new_mask = mask
 

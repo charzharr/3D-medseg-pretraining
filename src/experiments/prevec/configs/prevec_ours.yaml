@@ -3,7 +3,7 @@
 experiment:
   description: |
     > CT data pretraining for spatial prediction tasks (not just proposed vec).
-  id: "(0218_r2u101_pretr_CV+2)flip_vs100_adamw,0025-cos_mse_r1"     # for wandb run identification
+  id: "(0221_r2u101_pretr_CV_l1)flip_vs100_adamw,0002-cos_mse_r1"     # for wandb run identification
 
   name: 'prevec'   # for experiment module identification
   project: 'miccai22_pretrain3d'
@@ -31,10 +31,10 @@ tasks:
 
   prevec:
     loss: 'spherical'
-    pred_indices: [0,1,2]  # [0,1,2,3,4,5,6,7,8]
+    pred_indices: [0]  # [0,1,2,3,4,5,6,7,8]
     pred_mag: False
-    r_loss: 'mse'
-    ang_loss: 'mse'
+    r_loss: 'l1'
+    ang_loss: 'l1'
 
   # rot:
   #   rot_x_vals: []  # rot per axis are overwritten & flips are 0
@@ -117,7 +117,7 @@ train:
 
   optimizer:
     name: 'adamw'
-    lr: 0.0025  # usually 0.01 for FS50 & above
+    lr: 0.0002  # usually 0.01 for FS50 & above
     wt_decay: 0.01
     
     nesterov:

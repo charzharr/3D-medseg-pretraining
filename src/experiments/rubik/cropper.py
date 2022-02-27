@@ -22,10 +22,7 @@ if __name__ == '__main__':
 from lib.utils.parse import parse_bool, parse_range
 from data.transforms.transform_base import Transform
 from data.transforms.crops.utils import sample_crop, crop_resize_3d
-from experiments.prevec.sampler import ValueSampler
-
-
-DEBUG = False
+from experiments.rubik.sampler import ValueSampler
 
 
 class SpatialPretrainCropper3d:
@@ -35,7 +32,6 @@ class SpatialPretrainCropper3d:
             final_shape=None, 
             scale_sampler=None, 
             cubic_crop=True,
-            min_mean_thresh=None,
             interpolation='trilinear',
             return_record=True
             ):
@@ -51,21 +47,18 @@ class SpatialPretrainCropper3d:
         self.final_shape = final_shape
         self.scale_sampler = scale_sampler
         self.cubic_crop = cubic_crop
-        self.min_mean_thresh = min_mean_thresh
         self.interpolation = interpolation
         self.return_record = parse_bool(return_record, 'return_record')
     
     def __call__(
             self,
-            volume,               # data in (DxHxW)
-            mask=None,            # opt data in (DxHxW)
-            n_times=1,            # opt #crops to extract
-            final_shape=None,     # override init
-            scale_sampler=None,   # override init
-            cubic_crop=None,      # override init
-            interpolation=None,   # override init
-            min_mean_thresh=None, # override init
-            patch_size=None       # override random crop size sampling
+            volume_tensor,       # data in (DxHxW)
+            mask=None,           # opt data in (DxHxW)
+            n_times=1,           # opt #crops to extract
+            final_shape=None,    # override init
+            scale_sampler=None,  # override init
+            cubic_crop=None,     # override init
+            interpolation=None   # override init
             ):
         
         # Get crop parameters
@@ -75,42 +68,27 @@ class SpatialPretrainCropper3d:
         
         if scale_sampler is None:
             scale_sampler = self.scale_sampler
-        if patch_size is None:
-            assert hasattr(scale_sampler, 'sample') and \
-                   callable(scale_sampler.sample)
+        assert isinstance(scale_sampler, ValueSampler)
         
         if cubic_crop is None:
             cubic_crop = self.cubic_crop
         cubic_crop = parse_bool(cubic_crop, 'cubic_crop')
-        
-        if min_mean_thresh is None:
-            min_mean_thresh = self.min_mean_thresh
-        
+            
         if interpolation is None:
             interpolation = self.interpolation
         
-        volume_shape = volume.shape
+        volume_shape = volume_tensor.shape
         D, H, W = volume_shape
         ndim = len(volume_shape)
         
         # Apply transform to inputs
         image_crop_record_list = []
         if mask is not None:
-            assert isinstance(mask, (torch.Tensor, np.ndarray))
             mask_crop_record_list = []
         
-        # Apply transform to inputs
-        n_valid_crops = 0
-        while n_valid_crops < n_times:
+        for n in range(n_times):
             
-            # Get crop upper & lower bounding coordinates
-            if patch_size is not None:
-                assert len(patch_size) == 3
-                assert min(tuple(patch_size)) <= min(tuple(volume.shape))
-                _d = int(patch_size[0])
-                _h = int(patch_size[1])
-                _w = int(patch_size[2])
-            elif cubic_crop:  # same scale for all dims
+            if cubic_crop:  # same scale for all dims
                 dim_scale = scale_sampler.sample()
                 _d = int(dim_scale * final_shape[0])
                 _h = int(dim_scale * final_shape[1])
@@ -138,22 +116,12 @@ class SpatialPretrainCropper3d:
             assert 3 == sum([c <= s for c, s in zip(crop_shape, volume_shape)])
             
             crop_lower, crop_upper = sample_crop(volume_shape, crop_shape)
-            resized_crop = crop_resize_3d(volume, crop_lower, crop_upper, 
+            resized_crop = crop_resize_3d(volume_tensor, crop_lower, crop_upper, 
                                           final_shape, 
                                           interpolation=interpolation)
-            
-            if min_mean_thresh is not None:
-                if resized_crop.mean() < min_mean_thresh:
-                    if DEBUG:
-                        print(f'🏗️  Crop rejected,mean: {resized_crop.mean()}')
-                        print(f'    Lower: {crop_lower}, Upper: {crop_upper}')
-                    continue  # if not valid, sample another one
-            
-            n_valid_crops += 1
-            
             if self.return_record:
                 # info for vector prediction
-                inpvol_center = [s / 2 for s in volume.shape]
+                inpvol_center = [s / 2 for s in volume_tensor.shape]
                 outpat_center = [(p1 + p2) / 2 for p1, p2 in 
                                  zip(crop_lower, crop_upper)]
                 vol_patadj_center = [outpat_center[0], inpvol_center[1],
@@ -174,7 +142,7 @@ class SpatialPretrainCropper3d:
                                 for pt in nine_points]
                 
                 record = {
-                    'input_shape': tuple(volume.shape),
+                    'input_shape': tuple(volume_tensor.shape),
                     'output_shape': tuple(resized_crop.shape),
                     'interpolation': interpolation,
                     'final_crop_lower': tuple(crop_lower),
@@ -195,7 +163,7 @@ class SpatialPretrainCropper3d:
                                 final_shape, interpolation='nearest')
                 if self.return_record:
                     mask_record = {
-                        'input_shape': tuple(volume.shape),
+                        'input_shape': tuple(volume_tensor.shape),
                         'output_shape': tuple(resized_crop.shape),
                         'interpolation': 'nearest',
                         'final_crop_lower': tuple(crop_lower),

@@ -5,6 +5,68 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+# ============================================================================ #
+# * ### * ### * ### *           Res2UNet Wrapper V2        * ### * ### * ### * #
+# ============================================================================ #
+    
+
+class PreVecV2(nn.Module):
+    """
+    Changes & Comments
+      - Uses adaptive average pool instead and instatly concat. 
+      - Takes bottom 3 decoder lowers instead of all.
+    """
+    
+    def __init__(self, config, unet_like, num_classes, dropout=0.2):
+        super().__init__()
+        
+        self.config = config 
+        self.backbone = unet_like
+        
+        backbone_out_dims = [32, 64, 64, 128, 256, 2048]  # hard-coded
+        self.relu = nn.ReLU(inplace=True)
+        self.flatten = nn.Sequential(
+            nn.AdaptiveAvgPool3d(1),
+            nn.Flatten(1)
+        )
+        
+        cat_dims = sum(backbone_out_dims[-3:])
+        self.prediction = nn.Sequential(
+            nn.Dropout(p=dropout),
+            nn.Linear(cat_dims, cat_dims // 2),
+            nn.BatchNorm1d(cat_dims // 2),
+            self.relu,
+            nn.Linear(cat_dims // 2, 256),
+            nn.BatchNorm1d(256),
+            self.relu,
+            nn.Linear(256, num_classes)
+        )
+
+        num_params = sum([p.numel() for p in self.parameters()])
+        print(f'💠 PreVecV2 created ({num_params:,} params). \n'
+              f'   out_channels={num_classes}, drop={dropout}, '
+              f'cat_dims={cat_dims}.')
+
+    def forward(self, x):
+        out_d = self.backbone(x)
+        
+        # Downsample or Reduce dimensions before MS-concat
+        out_32 = self.flatten(out_d['32x'])
+        out_16 = self.flatten(out_d['16x'])
+        out_8 = self.flatten(out_d['8x'])
+        
+        out = torch.cat([out_32, out_16, out_8], 1)
+        out = self.prediction(out)
+        
+        return {
+            'enc_d': out_d, 
+            'recon': out_d['out'],
+            'out': out
+        }
+    
+
+
+
 
 # ============================================================================ #
 # * ### * ### * ### *  Res2UNet101 Pretext Model Wrappers  * ### * ### * ### * #

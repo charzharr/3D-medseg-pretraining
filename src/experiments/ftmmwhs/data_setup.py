@@ -94,15 +94,16 @@ def get_data_components(cfg, get_samples_only=False):
     # 2. Create master list of samples & SampleSet
     start = time.time()
     
+    spacing = SPACING
     if 'spacing' in cfg.data.mmwhs:
-        SPACING = cfg.data.mmwhs.spacing
-        print(f'🖼️  ({NAME}) Using config spacing (WxHxD): {SPACING}')
+        spacing = cfg.data.mmwhs.spacing
+        print(f'🖼️  ({NAME}) Using config spacing (WxHxD): {spacing}')
     else:
-        print(f'🖼️  ({NAME}) Using default spacing (WxHxD): {SPACING}')
+        print(f'🖼️  ({NAME}) Using default spacing (WxHxD): {spacing}')
     
     sample_args = []
     for i, S in pd.concat([train_df, test_df]).iterrows():
-        sample_args.append((SPACING, 
+        sample_args.append((spacing, 
                             i, S['id'], S['image'], S['mask'], S['imgsize'],
                             S['subset']))
         if cfg.experiment.debug.mode and i == 5:

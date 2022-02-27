@@ -5,7 +5,7 @@ experiment:
     > MMWHS (16 train, 4 test) segmentation finetuning.
     >   Goal: See if reduced LR will help + faster training.
     >     Also, see if 1 spacing performance compared to 0.625.
-  id: "(0219_whsFS10-1mm_r2unet101)vs500_dsup+batchdice_cedc-adamw,001-wd,0001-cos_r1"     # for wandb run identification
+  id: "(0224_whsFS10_r2unet101)vs500_dsup+batchdice_cedc-adamw,001-wd,01-cos_r1"     # for wandb run identification
 
   name: 'ftmmwhs'   # for experiment module identification
   project: 'miccai22_pretrain3d'
@@ -34,7 +34,7 @@ data:  # describing project-wide data specifications
     num_classes: 8  # including background
     split: 'fs10_8-2_a.csv'  # 'lab_df.csv' 'fs50_8-2_a.csv'
       # 16 train, 4 test | 
-    spacing: [1,1,1]  # WxHxD (reversed from pytorch dims)
+    spacing: [0.625,0.625,0.625]  # WxHxD (reversed from pytorch dims)
 
 # Model / Criterion / Other nn.Module Specifications
 model:
@@ -89,7 +89,7 @@ train:
   optimizer:
     name: 'adamw'
     lr: 0.001  # usually 0.01 for FS50 & above
-    wt_decay: 0.0001
+    wt_decay: 0.01
     
     nesterov:
       momentum: 0.99

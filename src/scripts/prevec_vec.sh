@@ -14,7 +14,7 @@
 
 
 export PROJ_PATH="/afs/crc.nd.edu/user/y/yzhang46/_3DPRE"
-export RUN_CFG="prevec_ours.yaml"
+export RUN_CFG="prevec_vec.yaml"
 
 
 if [ "$USER" == "yzhang46" ]; then

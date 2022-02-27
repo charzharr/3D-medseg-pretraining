@@ -8,13 +8,13 @@
 #$ -pe smp 4          
 #$ -q long          
 
-#$ -N Mar1-deadline(sorry4hogging)
-#$ -q gpu@@csecri-titanxp   # gpu@@csecri-p100, gpu@@csecri-titanxp 
+#$ -N pre3d_mmwhs
+#$ -q gpu@@csecri-p100   # gpu@@csecri-p100, gpu@@csecri-titanxp 
 #$ -l gpu_card=1
 
 
 export PROJ_PATH="/afs/crc.nd.edu/user/y/yzhang46/_3DPRE"
-export RUN_CFG="ftmmwhs_tune.yaml"
+export RUN_CFG="ftbcv_tune.yaml"
 
 
 if [ "$USER" == "yzhang46" ]; then

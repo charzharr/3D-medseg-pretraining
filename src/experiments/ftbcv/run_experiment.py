@@ -30,7 +30,7 @@ import multiprocessing
 import numpy as np
 import pandas as pd
 import collections
-from collections import namedtuple
+from collections import namedtuple, OrderedDict
 
 import torch, torchvision
 import torch.nn.functional as F
@@ -507,23 +507,117 @@ def get_model(cfg, class_bal_bias=False):
         raise ValueError(f'Model {cfg.model.name} is not supported.')
 
     # Initialize parameters
-    if cfg.experiment.checkpoint.file:  # Checkpoint handling
-        filename = cfg.experiment.checkpoint.file
-        curr_path = pathlib.Path(__file__).parent.absolute()
-        if pathlib.Path(filename).exists():
-            filepath = str(pathlib.Path(filename).absolute())
-        elif (curr_path / filename).exists():
-            filepath = str(curr_path / filename)
-        elif (curr_path / 'artifacts' / filename).exists():
-            filepath = str(curr_path / 'artifacts' / filename)
-        else:
-            filepath = None
-            print(f'Give filename {filename} could not be found.')
+    cp_exp_name = cfg.experiment.checkpoint.file
+    if cp_exp_name:
+        print(f'⭐  Loading checkpoint! {cp_exp_name}')
+        curr_path = pathlib.Path(__file__).parent
+        pre_artifact_path = curr_path.parent / 'prevec' / 'artifacts'
+        if not (pre_artifact_path / cp_exp_name).exists():
+            pre_artifact_path = curr_path.parent / 'rubik' / 'artifacts'
+        assert (pre_artifact_path / cp_exp_name).exists()
 
-        if filepath:
-            checkpoint_d = torch.load(filepath, map_location='cpu')
-            state_dict = checkpoint_d['state_dict']
-            print(model.load_state_dict(state_dict))
+        checkpoint_path = None
+        for f in [pre_artifact_path / cp_exp_name / f for f in 
+                os.listdir(pre_artifact_path / cp_exp_name)]:
+            if str(f)[-3:] == 'pth':
+                checkpoint_path = str(pre_artifact_path / f)
+                print(f'\t Loaded Checkpoint: {checkpoint_path}')
+        assert checkpoint_path, f'No .pth files in {pre_artifact_path / cp_exp_name}'
+
+        checkpoint = torch.load(checkpoint_path, map_location='cpu')
+        cp_config = checkpoint['config']
+
+        if 'name' not in cp_config.tasks:
+            print('⭐  Loading state dict for an old ass task.')
+            compat_state_dict = OrderedDict()
+            for k, v in checkpoint['state_dict'].items():
+                if 'backbone'in k:
+                    new_k = k.replace('backbone.','')
+                    if new_k.split('.')[0] == 'final_conv':
+                        continue
+                    compat_state_dict[new_k] = v 
+
+            print(model.load_state_dict(compat_state_dict, strict=False))
+        elif cp_config.tasks.name in('mg'):
+            print('⭐  Loading state dict for {cp_config.tasks.name}.')
+            compat_state_dict = OrderedDict()  # remove final conv weights and biases
+            for k, v in checkpoint['state_dict'].items():
+                if 'final_conv' == k.split('.')[0]:
+                    # print(k)
+                    continue
+                compat_state_dict[k] = v 
+            print(model.load_state_dict(compat_state_dict, strict=False))
+        elif cp_config.tasks.name in('sar'):
+            print('⭐  Loading state dict for {cp_config.tasks.name}.')
+
+            compat_state_dict = OrderedDict()  # remove final conv weights and biases
+            for k, v in checkpoint['state_dict'].items():
+                if 'backbone'in k:
+                    k = k.replace('backbone.','')
+                if 'final_conv' == k.split('.')[0] or 'scale_' in k:
+                    # print(k)
+                    continue
+                compat_state_dict[k] = v 
+
+            print(model.load_state_dict(compat_state_dict, strict=False))
+        elif 'rubik' in cp_config.tasks.name:
+            print('⭐  Loading state dict for {cp_config.tasks.name}.')
+
+            compat_state_dict = OrderedDict()  # remove final conv weights and biases
+            for k, v in checkpoint['state_dict'].items():
+                if 'backbone'in k:
+                    k = k.replace('backbone.','')
+                if 'final_conv' == k.split('.')[0] or 'scale_' in k:
+                    # print(k)
+                    continue
+                compat_state_dict[k] = v 
+
+            print(model.load_state_dict(compat_state_dict, strict=False))
+        elif cp_config.tasks.name in('vec'):
+            print('⭐  Loading state dict for {cp_config.tasks.name}.')
+            compat_state_dict = OrderedDict()
+            for k, v in checkpoint['state_dict'].items():
+                if 'backbone'in k:
+                    k = k.replace('backbone.','')
+                if k.split('.')[0] in ('final_conv', 'prediction'):
+                    # print(k)
+                    continue
+                compat_state_dict[k] = v 
+            print(model.load_state_dict(compat_state_dict, strict=False))
+        else:
+            raise NotImplementedError()
+
+    # if cfg.experiment.checkpoint.file:  # Checkpoint handling
+    #     filename = cfg.experiment.checkpoint.file
+    #     curr_path = pathlib.Path(__file__).parent.absolute()
+    #     if pathlib.Path(filename).exists():
+    #         filepath = str(pathlib.Path(filename).absolute())
+    #     elif (curr_path / filename).exists():
+    #         filepath = str(curr_path / filename)
+    #     elif (curr_path / 'artifacts' / filename).exists():
+    #         filepath = str(curr_path / 'artifacts' / filename)
+    #     elif (curr_path.parent / 'prevec' / 'artifacts' / filename):
+    #         filepath = str(curr_path.parent / 'prevec' / 'artifacts' / filename)
+    #     else:
+    #         filepath = None
+    #         print(f'Give filename {filename} could not be found.')
+
+    #     if filepath:
+    #         checkpoint_d = torch.load(filepath, map_location='cpu')
+    #         state_dict = checkpoint_d['state_dict']
+
+    #         from collections import OrderedDict
+    #         compat_state_dict = OrderedDict()
+    #         for k, v in state_dict.items():
+    #             if 'backbone'in k:
+    #                 new_k = k.replace('backbone.','')
+    #                 if new_k[:10] == 'final_conv':
+    #                     continue
+    #                 compat_state_dict[new_k] = v 
+
+    #         print(model.load_state_dict(compat_state_dict, strict=False))
+
+
     elif 'cotr' not in cfg.model.name and 'unetr' != cfg.model.name: 
         # Initialize
         init_type = cfg.model.init

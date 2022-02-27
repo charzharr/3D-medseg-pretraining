@@ -145,20 +145,45 @@ def run(rank, cfg, inference_metrics_queue):
         output.header_three('Criterion + Optimizer + Scheduler Setup')
     
     criterion = None
-    if cfg.tasks.name == 'prevec':
-        if cfg.tasks.prevec.loss == 'spherical':
+    if cfg.tasks.name == 'vec':
+        if cfg.tasks.vec.loss == 'spherical':
             from experiments.prevec.prevec_losses import SphericalCriterion
             crit_prevec = SphericalCriterion(
-                r_loss=cfg.tasks.prevec.r_loss, 
-                angle_loss=cfg.tasks.prevec.ang_loss,
+                r_loss=cfg.tasks.vec.r_loss, 
+                angle_loss=cfg.tasks.vec.ang_loss,
                 r_weight=1, theta_weight=1, phi_weight=1
             )
             criterion = crit_prevec.to(device)
-            # cfg.tasks.prevec.pred_vectors
+            # cfg.tasks.vec.pred_vectors
         else:
             assert False
+            
+        if task_config.num_classes > 0:
+            print(f"🪧   Recon using loss: {task_config.loss_recon}.")
+            if task_config.loss_recon == 'mse':
+                criterion_recon = nn.MSELoss().to(device)
+            else:
+                criterion_recon = nn.L1Loss().to(device)
+        if task_config.num_classes == 2:
+            print(f"🪧   Recon using boundary loss: {task_config.loss_boundary}.")
+            if task_config.loss_boundary == 'mse':
+                criterion_boundary = nn.MSELoss().to(device)
+            else:
+                criterion_boundary = nn.L1Loss().to(device)
+                
     elif cfg.tasks.name == 'mg':
-        criterion = nn.MSELoss().to(device)
+        print(f"🪧   MG using recon loss: {task_config.loss_recon}.")
+        if task_config.loss_recon == 'mse':
+            criterion = nn.MSELoss().to(device)
+        else:
+            criterion = nn.L1Loss().to(device)
+            
+        if task_config.num_classes == 2:
+            print(f"🪧   MG using boundary loss: {task_config.loss_boundary}.")
+            if task_config.loss_boundary == 'mse':
+                criterion_boundary = nn.MSELoss().to(device)
+            else:
+                criterion_boundary = nn.L1Loss().to(device)
     elif cfg.tasks.name == 'sar':
         criterion = model.loss
     
@@ -169,6 +194,7 @@ def run(rank, cfg, inference_metrics_queue):
     if rank == 0:
         output.header_three('Data Setup')
     if cfg.data.name == 'mmwhs':
+        print(f'🪧  Using WHS to pretrain rather than collation set.')
         from experiments.prevec.data_setup import get_mmwhs_data_components
         data_d = get_mmwhs_data_components(cfg)
     elif cfg.data.name == 'pretrain':
@@ -232,7 +258,7 @@ def run(rank, cfg, inference_metrics_queue):
             # -- Loss Calculation -- #
             loss = 0
             loss_str = ''
-            if cfg.tasks.name == 'prevec':
+            if cfg.tasks.name == 'vec':
                 # create labels
                 vectors = batch['vectors']
                 Y_prevec = create_prevec_targ(vectors, records,
@@ -241,11 +267,49 @@ def run(rank, cfg, inference_metrics_queue):
                 loss_prevec_d = criterion(out, Y_prevec)
                 loss += loss_prevec_d['loss']
                 loss_str += f'PrevecLoss {loss.item():.4f} '
+                
+                if task_config.num_classes == 1:
+                    Y = batch['Y'].to(device)
+                    task_loss = criterion_recon(out_d['recon'].sigmoid(), Y)
+                    loss += task_loss
+                    loss_str += f'ReconLoss {loss.item():.4f} '
+                elif task_config.num_classes == 2:
+                    Y = batch['Y'].to(device)
+                    recon_loss = criterion_recon(
+                        out_d['recon'][:,0,...].sigmoid().unsqueeze(1), Y)
+                    if not task_config.boundary_in_paint:
+                        Y_boundary = batch['boundaries'].to(device)
+                        bound_pred = out_d['recon'][:,1,...].sigmoid().unsqueeze(1)
+                    else:
+                        bound_mask = batch['boundary_masks'].to(device)
+                        Y_boundary = batch['boundaries'].to(device) * bound_mask
+                        bound_pred = out_d['recon'][:,1,...].sigmoid().unsqueeze(1) * bound_mask
+                    bound_loss = criterion_boundary(bound_pred, Y_boundary)
+                    
+                    loss += recon_loss + bound_loss
+                    loss_str += (f'ReconLoss {loss.item():.4f} (recon {recon_loss:.4f}, '
+                                 f'bound {bound_loss:.4f}) ')
             elif cfg.tasks.name == 'mg':
                 Y = batch['Y'].to(device)
-                task_loss = criterion(out.sigmoid(), Y)
-                loss += task_loss
-                loss_str += f'MGLoss {loss.item():.4f} '
+                if task_config.num_classes == 2:
+                    recon_loss = criterion(out[:,0,...].sigmoid().unsqueeze(1),
+                                           Y)
+                    if not task_config.boundary_in_paint:
+                        Y_boundary = batch['boundaries'].to(device)
+                        bound_pred = out[:,1,...].sigmoid().unsqueeze(1)
+                    else:
+                        bound_mask = batch['boundary_masks'].to(device)
+                        Y_boundary = batch['boundaries'].to(device) * bound_mask
+                        bound_pred = out[:,1,...].sigmoid().unsqueeze(1) * bound_mask
+                    bound_loss = criterion_boundary(bound_pred, Y_boundary)
+                    
+                    loss += recon_loss + bound_loss
+                    loss_str += (f'MGLoss {loss.item():.4f} (recon {recon_loss:.4f}, '
+                                 f'bound {bound_loss:.4f}) ')
+                else:
+                    task_loss = criterion(out.sigmoid(), Y)
+                    loss += task_loss
+                    loss_str += f'MGLoss (recon-only) {loss.item():.4f} '
             elif cfg.tasks.name == 'sar':
                 Y_recon = batch['Y_recon'].to(device)
                 Y_scale = batch['Y_scale'].to(device)
@@ -276,11 +340,12 @@ def run(rank, cfg, inference_metrics_queue):
                 epmeter.update({k: iter_metrics_d[k] for k in update_mets})
 
             # Save images, masks, and predictions
-            if (cfg.tasks.name == 'mg' or cfg.tasks.name == 'sar') and \
+            if (cfg.tasks.name == 'mg' or cfg.tasks.name == 'sar') or \
+                (cfg.tasks.name == 'vec' and cfg.tasks.vec.num_classes > 0) and \
                     it == 0 and epoch % 100 == 0:
                 def save_volume(image_arr, ref_sitk, filename):
                     image_sitk = sitk.GetImageFromArray(image_arr)
-                    image_sitk.SetSpacing(ref_sitk.GetSpacing())
+                    image_sitk.SetSpacing((1, 1, 1))
                     image_sitk.SetOrigin(ref_sitk.GetOrigin())
                     image_sitk.SetDirection(ref_sitk.GetDirection())
                     sitk.WriteImage(image_sitk, filename)
@@ -296,7 +361,10 @@ def run(rank, cfg, inference_metrics_queue):
                 for b in range(0, X.shape[0], 1):
                     image_arr = X[b][0].detach().cpu().numpy().astype(np.float32)
                     label_arr = Y[b][0].detach().cpu().numpy().astype(np.float32)
-                    recon_arr = out[b][0].sigmoid().detach().cpu().numpy().astype(np.float32)
+                    if cfg.tasks.name == 'vec':
+                        recon_arr = out_d['recon'][b][0].sigmoid().detach().cpu().numpy().astype(np.float32)
+                    else:
+                        recon_arr = out[b][0].sigmoid().detach().cpu().numpy().astype(np.float32)
                     
                     ref_im = samples[b].image.sitk_image
                     save_volume(image_arr, ref_im, os.path.join(exp_save_path,
@@ -305,6 +373,14 @@ def run(rank, cfg, inference_metrics_queue):
                         f'ep{epoch}_b{b}_orig.nii.gz'))
                     save_volume(recon_arr, ref_im, os.path.join(exp_save_path,
                         f'ep{epoch}_b{b}_recon.nii.gz'))
+                    
+                    if out.shape[1] == 2:  # save boundary prediction as well
+                        bound_targ_arr = Y_boundary[b][0].detach().cpu().numpy().astype(np.float32)
+                        save_volume(bound_targ_arr, ref_im, os.path.join(exp_save_path,
+                        f'ep{epoch}_b{b}_boundY.nii.gz'))
+                        bound_arr = out[b][1].sigmoid().detach().cpu().numpy().astype(np.float32)
+                        save_volume(bound_arr, ref_im, os.path.join(exp_save_path,
+                        f'ep{epoch}_b{b}_bound.nii.gz'))
 
             global_iter += 1
             WATCH.tic('iter')
@@ -533,7 +609,7 @@ def save_model(cfg, state_dict, tracker, epoch, code_d):
 
 
 def create_prevec_targ(vectors, records, cfg):
-    prevec_cfg = cfg.tasks.prevec
+    prevec_cfg = cfg.tasks.vec
     vec_indices = prevec_cfg.pred_indices
     
     Y = torch.zeros(len(vectors), 3 * len(vec_indices))

@@ -1,10 +1,3 @@
-""" Module data_mg.py (By: Charley Zhang, 2022)
-
-Definitions of non-preloaded data containers and loaders for unsupervised
-Models Genesis pretraining. 
-    - Implements efficient multi-patch per crop.
-    - Skips mostly air crops via a mean patch threshold. 
-"""
 
 import sys, os
 import math, random
@@ -22,8 +15,6 @@ import pandas as pd
 import numpy as np
 from PIL import Image, ImageFilter, ImageOps
 import SimpleITK as sitk
-from skimage import filters
-from scipy import ndimage as ndi
 
 import torch, torchvision
 import torch.nn as nn
@@ -49,21 +40,12 @@ from data.transforms.models_genesis import (
     in_paint,
     out_paint
 )
-from experiments.prevec.sampler import ValueSampler
-
-
-# Constants or Settings for Data
-VISUALIZE = False
-PRELOAD_DATA = False
+from experiments.rubik.sampler import ValueSampler
+from experiments.rubik.reorient import rotate3d
 
 
 
-# ========================================================================== #
-# * ### * ### * ### *              Loading               * ### * ### * ### * #
-# ========================================================================== #
-
-
-class MGSampleSet(torch.utils.data.Dataset):
+class RubikSampleSet(torch.utils.data.Dataset):
     """ Designed for Models Genesis pretraining. """
     clamp_low = -1000 
     clamp_high = 1000
@@ -80,6 +62,9 @@ class MGSampleSet(torch.utils.data.Dataset):
         print(f'🖼️  Sampling from scales: {config.train.scale_range}')
         
         self.samples = samples
+        
+        self.m = self.task_config.m    # number of cube levels to rotate per axes
+        self.n = self.task_config.n    # number of sub-cubes per dim
         
         self._preprocess_time = None  # EMA of preprocess time
         self._getitem_time = None
@@ -102,7 +87,7 @@ class MGSampleSet(torch.utils.data.Dataset):
         image_sitk = sample.image.sitk_image
         image_arr = self._preprocess(image_sitk)
         
-        # --- Get Valid Crops & Apply Augmentations --- #
+        # --- Get Valid Non-Air Crops --- #
         min_mean_thresh = self.config.train.min_mean_crop_thresh
         if sample.dataset == 'mmwhs':
             min_mean_thresh = 0
@@ -117,53 +102,63 @@ class MGSampleSet(torch.utils.data.Dataset):
         )
         crops, records = zip(*crop_meta_list)
         
+        # --- Augment Crops & Prepare Labels --- #
+        def get_partitions(length, n_partitions):
+            """ Returns list of start and stop indices [start, stop). """
+            partitions = []
+            step_size = length // n_partitions
+            assert step_size > 0
+            for l in range(n_partitions):
+                partitions.append([step_size * l, step_size * (l + 1)])
+            partitions[-1][-1] = length
+            return partitions
+        
         samples = []
         fin_crops = []
         fin_labs = []
-        boundaries, boundary_masks = [], []   # for custom mg usage
         for i, crop in enumerate(crops):
+            # labels are untouched
             y = copy.deepcopy(crop)
             record = records[i]
-                                    
-            crop, y, flip_flags = flip(crop, y, p=self.task_config.t_mg_flip)
-            record['flip'] = flip_flags
-                        
-            crop = local_pixel_shuffle(
-                crop, 
-                p=self.task_config.t_mg_shuffle,
-                n_shuffle_windows=self.task_config.t_mg_shuffle_times
-            )
-            crop = nonlinear_intensity_map(
-                crop, 
-                p=self.task_config.t_mg_nonlinear
-            )
-
-            if random.random() < self.task_config.t_mg_paint:
-                if random.random() < self.task_config.t_mg_inpaint:
-                    crop, paint_mask = in_paint(crop, p=1.0,
-                        uniform_paint=self.task_config.t_mg_inpaint_uniform,
-                        n_paints=self.task_config.t_mg_inpaint_times,
-                        get_paint_mask=True)
-                    record['in_paint'] = True
-                else:
-                    crop, paint_mask = out_paint(crop, p=1.0,
-                        uniform_paint=self.task_config.t_mg_outpaint_uniform,
-                        n_paints=self.task_config.t_mg_outpaint_times,
-                        get_paint_mask=True)
-                    record['out_paint'] = True
-            else:
-                paint_mask = np.ones(crop.shape).astype('uint8')
             
+            # rubik-rotate m layers
+            rubik_ops = []
+            for axis in range(3):
+                cube_layers = np.random.choice(list(range(self.n)), 
+                                               size=self.m, replace=False)
+                axis_partitions = get_partitions(crop.shape[axis], self.n)
+                for layer_idx in cube_layers:
+                    start, stop = axis_partitions[layer_idx]
+                    num_rot90s = int(np.random.choice([1, 2, 3], size=1)[0])
+                    
+                    if axis == 0:
+                        rot_crop = np.rot90(copy.deepcopy(crop),
+                                            k=num_rot90s,
+                                            axes=(1, 2))
+                        crop[start:stop,:,:] = rot_crop[start:stop,:,:]
+                    elif axis == 1:
+                        rot_crop = np.rot90(copy.deepcopy(crop),
+                                            k=num_rot90s,
+                                            axes=(2, 0))
+                        crop[:,start:stop,:] = rot_crop[:,start:stop,:]
+                    else:
+                        rot_crop = np.rot90(copy.deepcopy(crop),
+                                            k=num_rot90s,
+                                            axes=(1, 0))
+                        crop[:,:,start:stop] = rot_crop[:,:,start:stop]
+                    
+                    rubik_ops.append({
+                        'axis': axis, 'layer': layer_idx, 'start': start,
+                        'stop': stop, 'num_rot90s': num_rot90s
+                    })
+            record['rubik'] = rubik_ops
+                                    
+            # crop, y, flip_flags = flip(crop, y, p=self.task_config.t_mg_flip)
+            # record['flip'] = flip_flags
             
             fin_crops.append(torch.tensor(crop.astype(np.float32).copy()))
             fin_labs.append(torch.tensor(y.astype(np.float32).copy()))
             samples.append(sample)
-            
-            filtered_crop = ndi.median_filter(y, size=5)
-            schar_edges = filters.scharr(filtered_crop)
-            boundary = np.clip((schar_edges - 0.01) * 30, 0, 1)
-            boundaries.append(torch.tensor(boundary))
-            boundary_masks.append(torch.tensor(paint_mask, dtype=torch.uint8))
                     
         tot_time = time.time() - start
         if self._getitem_time is None:
@@ -178,12 +173,10 @@ class MGSampleSet(torch.utils.data.Dataset):
             'records': records,
             'image_tensors': fin_crops,
             'label_tensors': fin_labs,
-            'boundary_tensors': boundaries,
-            'boundary_mask_tensors': boundary_masks,
         }
         
     @staticmethod
-    def _collate_mg(batch):
+    def _collate(batch):
         """ 
         Args:
             batch (list of size B): each element is the dict returned by __getitem__
@@ -200,25 +193,18 @@ class MGSampleSet(torch.utils.data.Dataset):
         records = []
         image_tensors = []
         label_tensors = []
-        boundary_arrs = []
-        boundary_mask_arrs = []
         
         for b, example in enumerate(batch):
             _combine(samples, example['samples'])
             _combine(records, example['records'])
             _combine(image_tensors, example['image_tensors'])
             _combine(label_tensors, example['label_tensors'])
-            
-            _combine(boundary_arrs, example['boundary_tensors'])
-            _combine(boundary_mask_arrs, example['boundary_mask_tensors'])
         
         return {
             'X': torch.stack(image_tensors, dim=0).unsqueeze(1), 
             'Y': torch.stack(label_tensors, dim=0).unsqueeze(1),
-            'boundaries': torch.stack(boundary_arrs, dim=0).unsqueeze(1),
-            'boundary_masks': torch.stack(boundary_mask_arrs, dim=0).unsqueeze(1),
             'samples': samples,
-            'records': records,
+            'records': records
         }
         
     def _preprocess(self, image_sitk):
@@ -266,3 +252,4 @@ class MGSampleSet(torch.utils.data.Dataset):
             self._preprocess_time = 0.9 * self._preprocess_time + 0.1 * tot_time
         
         return image_arr
+
